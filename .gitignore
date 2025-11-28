@@ -39,7 +39,7 @@ output/images/with_annotation/*
 output/images/without_annotation/*
 output/annotations/*
 output/debug_html/*
-!output/*/.gitkeep
+!output/**/.gitkeep
 
 # Generated documents
 generated_documents/
