@@ -87,6 +87,9 @@ class TableStyler(HTMLParser):
         self.current_cell_index = 0
         self.row_index_global = 0
         
+        # Cache column_colors for column-based pattern (avoids repeated getattr calls)
+        self._column_colors = getattr(self.config.background, 'column_colors', {})
+        
     def _get_border_style(self, is_header: bool = False, is_footer: bool = False, 
                           row_idx: int = 0, col_idx: int = 0, has_colspan: bool = False) -> str:
         """Generate border style based on configuration."""
@@ -123,7 +126,7 @@ class TableStyler(HTMLParser):
         return '; '.join(parts) if parts else f'border: {border_spec}'
     
     def _get_background_color(self, is_header: bool = False, is_footer: bool = False,
-                              row_idx: int = 0, total_rows: int = 0) -> str:
+                              row_idx: int = 0, col_idx: int = 0, total_rows: int = 0) -> str:
         """Get background color based on pattern."""
         pattern = self.config.background.pattern
         
@@ -148,6 +151,18 @@ class TableStyler(HTMLParser):
         
         if pattern == 'random':
             return random.choice(self.config.background.random_colors)
+        
+        if pattern == 'checkerboard':
+            if (row_idx + col_idx) % 2 == 0:
+                return self.config.background.even_color
+            else:
+                return self.config.background.odd_color
+        
+        if pattern == 'column-based':
+            if col_idx in self._column_colors:
+                return self._column_colors[col_idx]
+            # Fallback to alternating colors
+            return self.config.background.even_color if col_idx % 2 == 0 else self.config.background.odd_color
         
         return ''
     
@@ -203,7 +218,7 @@ class TableStyler(HTMLParser):
         return styles
     
     def _apply_random_line_breaks(self, text: str) -> str:
-        """Randomly insert <br> tags into text."""
+        """Randomly insert <br> tags into text based on configuration."""
         if not self.config.spacing.random_line_breaks:
             return text
         
@@ -211,13 +226,52 @@ class TableStyler(HTMLParser):
         if len(words) <= 1:
             return text
         
+        # Get configuration values with defaults
+        probability = getattr(self.config.spacing, 'line_break_probability', 0.15)
+        min_words_before = getattr(self.config.spacing, 'min_words_before_break', 3)
+        max_breaks = getattr(self.config.spacing, 'max_breaks_per_cell', 2)
+        break_on_punct = getattr(self.config.spacing, 'break_on_punctuation', False)
+        prefer_natural = getattr(self.config.spacing, 'prefer_natural_breaks', False)
+        
         result = []
+        breaks_inserted = 0
+        words_since_break = 0
+        
         for i, word in enumerate(words):
             result.append(word)
-            if i < len(words) - 1 and random.random() < self.config.spacing.line_break_probability:
-                result.append('<br/>')
-            else:
-                result.append(' ')
+            words_since_break += 1
+            
+            if i < len(words) - 1:
+                # Check if we can add more breaks
+                if breaks_inserted >= max_breaks:
+                    result.append(' ')
+                    continue
+                
+                # Check minimum words before break
+                if words_since_break < min_words_before:
+                    result.append(' ')
+                    continue
+                
+                # Determine if we should break here
+                should_break = False
+                
+                # Prefer natural breaks (after punctuation)
+                if prefer_natural or break_on_punct:
+                    if word.endswith((',', ';', ':', '-', '–', '—')):
+                        should_break = random.random() < (probability * 2)  # Higher chance at punctuation
+                    elif word.endswith('.') and i < len(words) - 2:  # Not at end of sentence
+                        should_break = random.random() < (probability * 1.5)
+                
+                # Random break check
+                if not should_break and random.random() < probability:
+                    should_break = True
+                
+                if should_break:
+                    result.append('<br/>')
+                    breaks_inserted += 1
+                    words_since_break = 0
+                else:
+                    result.append(' ')
         
         return ''.join(result).strip()
     
@@ -269,6 +323,7 @@ class TableStyler(HTMLParser):
             bg_color = self._get_background_color(
                 is_header, is_footer,
                 self.row_index_global,
+                self.current_cell_index,
                 len(self.structure['rows'])
             )
             if bg_color:
