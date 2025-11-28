@@ -201,6 +201,9 @@ class TableStyler(HTMLParser):
         self.current_cell_index = 0
         self.row_index_global = 0
         
+        # Cache column_colors for column-based pattern (avoids repeated getattr calls)
+        self._column_colors = getattr(self.config.background, 'column_colors', {})
+        
     def _get_border_style(self, is_header: bool = False, is_footer: bool = False, 
                           row_idx: int = 0, col_idx: int = 0, has_colspan: bool = False) -> str:
         """Generate border style based on configuration."""
@@ -273,9 +276,8 @@ class TableStyler(HTMLParser):
                 return self.config.background.odd_color
         
         if pattern == 'column-based':
-            column_colors = getattr(self.config.background, 'column_colors', {})
-            if col_idx in column_colors:
-                return column_colors[col_idx]
+            if col_idx in self._column_colors:
+                return self._column_colors[col_idx]
             # Fallback to alternating colors
             return self.config.background.even_color if col_idx % 2 == 0 else self.config.background.odd_color
         

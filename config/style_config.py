@@ -142,10 +142,20 @@ def _weighted_choice(weights: Dict[str, int]) -> str:
         
     Returns:
         Randomly selected item key
+        
+    Raises:
+        ValueError: If weights dictionary is empty or all weights are 0
     """
+    if not weights:
+        raise ValueError("weights dictionary cannot be empty")
+    
     items = list(weights.keys())
     weight_values = list(weights.values())
     total = sum(weight_values)
+    
+    if total <= 0:
+        raise ValueError("Total weight must be greater than 0")
+    
     cumulative = 0
     rand_val = random.random() * total
     
