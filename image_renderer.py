@@ -324,6 +324,66 @@ async def get_table_cell_positions(table_element, page):
     positions = await page.evaluate(js_analyze_table, table_element)
     return positions
 
+async def measure_table_dimensions(
+    html_content: str,
+    initial_width: int = 4000,
+    initial_height: int = 4000,
+    margin: int = 100
+) -> dict:
+    """
+    Measure the actual dimensions of the rendered table.
+    
+    Args:
+        html_content: The HTML content to render
+        initial_width: Initial viewport width (should be large enough)
+        initial_height: Initial viewport height (should be large enough)
+        margin: Margin to add around the table (on all sides)
+        
+    Returns:
+        Dictionary with 'width', 'height', and 'bbox' of the table
+    """
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        page = await browser.new_page()
+        # Use a large viewport to allow table to render at natural size
+        await page.set_viewport_size({"width": initial_width, "height": initial_height})
+        await page.set_content(html_content, wait_until="networkidle")
+        await page.wait_for_timeout(300)
+        
+        # Find the table element and get its bounding box
+        table_element = await page.query_selector(".bbox-content-target")
+        if not table_element:
+            table_element = await page.query_selector(".annotated-element")
+        
+        if table_element:
+            bbox = await table_element.bounding_box()
+            if bbox:
+                await browser.close()
+                # Calculate final image size:
+                # - Table starts at bbox['x'], bbox['y'] (which includes left/top margin from HTML)
+                # - Add table width/height
+                # - Add additional margin on right/bottom for breathing room
+                final_width = int(bbox['x'] + bbox['width'] + margin)
+                final_height = int(bbox['y'] + bbox['height'] + margin)
+                return {
+                    "width": final_width,
+                    "height": final_height,
+                    "bbox": bbox,
+                    "table_width": int(bbox['width']),
+                    "table_height": int(bbox['height'])
+                }
+        
+        await browser.close()
+        # Fallback to initial dimensions if table not found
+        return {
+            "width": initial_width,
+            "height": initial_height,
+            "bbox": None,
+            "table_width": None,
+            "table_height": None
+        }
+
+
 async def render_html_to_image_and_annotate(
     html_content: str,
     output_image_path: str,
@@ -331,23 +391,55 @@ async def render_html_to_image_and_annotate(
     page_width: int,
     page_height: int,
     draw_bboxes_on_image: bool = True,
-    use_v2_detection: bool = False  # Toggle between detection methods
+    use_v2_detection: bool = False,  # Toggle between detection methods
+    dynamic_size: bool = False,  # Enable dynamic sizing based on table dimensions
+    size_margin: int = 100,  # Margin to add when using dynamic sizing
+    raw_table_html: str = None  # Raw HTML of the table for dynamic sizing
 ):
     """
     Renders HTML content to an image and extracts bounding box annotations.
     Now with improved line detection for browser-wrapped text.
+    
+    Args:
+        html_content: HTML content to render
+        output_image_path: Path for output image
+        output_annotation_path: Path for output annotations JSON
+        page_width: Page width (used as initial/max width if dynamic_size=True)
+        page_height: Page height (used as initial/max height if dynamic_size=True)
+        draw_bboxes_on_image: Whether to draw bounding boxes on output image
+        use_v2_detection: Toggle between line detection methods
+        dynamic_size: If True, adjust page size to fit actual table dimensions
+        size_margin: Margin to add around the table when using dynamic sizing
     """
+    # If dynamic sizing is enabled, measure the table first
+    actual_width = page_width
+    actual_height = page_height
+    
+    if dynamic_size:
+        dimensions = await measure_table_dimensions(
+            html_content,
+            initial_width=max(page_width, 4000),
+            initial_height=max(page_height, 4000),
+            margin=size_margin
+        )
+        actual_width = dimensions['width']
+        actual_height = dimensions['height']
+        table_w = dimensions.get('table_width', 'N/A')
+        table_h = dimensions.get('table_height', 'N/A')
+        print(f"Dynamic sizing: Table size {table_w}x{table_h}, Image size {actual_width}x{actual_height} (margin: {size_margin}px)")
+    
     annotations = {
         "image_path": os.path.basename(output_image_path),
-        "image_width": page_width,
-        "image_height": page_height,
+        "image_width": actual_width,
+        "image_height": actual_height,
+        "html": raw_table_html,
         "elements": []
     }
 
     async with async_playwright() as p:
         browser = await p.chromium.launch()
         page = await browser.new_page()
-        await page.set_viewport_size({"width": page_width, "height": page_height})
+        await page.set_viewport_size({"width": actual_width, "height": actual_height})
         await page.set_content(html_content, wait_until="networkidle")
         await page.wait_for_timeout(300)  # Give more time for rendering
 
@@ -367,7 +459,9 @@ async def render_html_to_image_and_annotate(
 
             for bbox_target_handle in bbox_targets:
                 bbox = await bbox_target_handle.bounding_box()
+                
                 if bbox and bbox['width'] > 0 and bbox['height'] > 0:
+                    print(f"Processing element of type '{element_class}' with bbox {bbox}")
                     element_content = await bbox_target_handle.text_content()
 
                     if element_class == "table":

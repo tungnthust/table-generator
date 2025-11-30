@@ -8,7 +8,7 @@ Preserves all core rendering logic.
 import os
 import json
 import random
-import asyncio
+import re
 from pathlib import Path
 from html.parser import HTMLParser
 from dataclasses import dataclass, field
@@ -21,6 +21,176 @@ from config.style_config import StyleConfig, BorderConfig, BackgroundConfig, Fon
 
 # Import image renderer
 from image_renderer import render_html_to_image_and_annotate
+
+
+def analyze_table_for_orientation(html_content: str) -> Dict[str, Any]:
+    """
+    Analyze HTML table content to determine optimal orientation and layout parameters.
+    Uses a scoring system based on multiple factors for robust decision making.
+    
+    Returns:
+        Dict with:
+        - orientation: 'portrait' or 'landscape'
+        - orientation_score: confidence score (higher = more confident)
+        - num_columns: number of columns
+        - num_rows: number of rows
+        - avg_cell_content_length: average content length per cell
+        - max_cell_content_length: max content length in any cell
+        - total_content_width: estimated total content width
+        - has_long_text_column: whether there's a column with long text
+        - recommended_target_width_multiplier: multiplier for target column width
+    """
+    # Extract text content from cells, organized by rows
+    rows_content = []
+    
+    # Find all rows
+    row_pattern = re.compile(r'<tr[^>]*>(.*?)</tr>', re.DOTALL | re.IGNORECASE)
+    cell_pattern = re.compile(r'<(?:td|th)[^>]*>(.*?)</(?:td|th)>', re.DOTALL | re.IGNORECASE)
+    
+    for row_match in row_pattern.finditer(html_content):
+        row_html = row_match.group(1)
+        cells = []
+        for cell_match in cell_pattern.finditer(row_html):
+            # Strip HTML tags to get text content
+            text = re.sub(r'<[^>]+>', ' ', cell_match.group(1))
+            text = re.sub(r'\s+', ' ', text).strip()
+            cells.append(text)
+        if cells:
+            rows_content.append(cells)
+    
+    row_count = len(rows_content)
+    col_count = max(len(row) for row in rows_content) if rows_content else 1
+    
+    # Flatten all cell contents for analysis
+    all_cells = [cell for row in rows_content for cell in row]
+    content_lengths = [len(c) for c in all_cells if c]
+    
+    avg_length = sum(content_lengths) / len(content_lengths) if content_lengths else 0
+    max_length = max(content_lengths) if content_lengths else 0
+    
+    # Analyze per-column content lengths
+    col_avg_lengths = []
+    for col_idx in range(col_count):
+        col_lengths = []
+        for row in rows_content:
+            if col_idx < len(row) and row[col_idx]:
+                col_lengths.append(len(row[col_idx]))
+        if col_lengths:
+            col_avg_lengths.append(sum(col_lengths) / len(col_lengths))
+        else:
+            col_avg_lengths.append(0)
+    
+    # Check for long text columns
+    max_col_avg = max(col_avg_lengths) if col_avg_lengths else 0
+    has_long_text_column = max_col_avg > 50 or max_length > 100
+    
+    # Estimate total content width (sum of column widths)
+    # Each column width ~ max(avg_length in that column, 5) chars
+    total_content_width = sum(max(avg, 8) for avg in col_avg_lengths)
+    
+    # === SCORING SYSTEM FOR ORIENTATION ===
+    # Positive = favor landscape, Negative = favor portrait
+    landscape_score = 0
+    
+    # Factor 1: Number of columns (more columns = landscape)
+    if col_count >= 7:
+        landscape_score += 40
+    elif col_count >= 5:
+        landscape_score += 25
+    elif col_count >= 4:
+        landscape_score += 10
+    elif col_count <= 2:
+        landscape_score -= 20
+    
+    # Factor 2: Content width vs height ratio
+    # Estimate width: total content chars * ~8px per char
+    # Estimate height: rows * ~30px per row
+    est_width = total_content_width * 8
+    est_height = row_count * 30
+    aspect_ratio = est_width / max(est_height, 1)
+    
+    if aspect_ratio > 3:
+        landscape_score += 30
+    elif aspect_ratio > 2:
+        landscape_score += 20
+    elif aspect_ratio > 1.5:
+        landscape_score += 10
+    elif aspect_ratio < 0.5:
+        landscape_score -= 25
+    elif aspect_ratio < 0.8:
+        landscape_score -= 10
+    
+    # Factor 3: Long text column presence (even 2-col table can be landscape if content is long)
+    if has_long_text_column:
+        landscape_score += 20
+    if max_col_avg > 80:
+        landscape_score += 15
+    
+    # Factor 4: Average cell content length
+    if avg_length > 40:
+        landscape_score += 15
+    elif avg_length > 25:
+        landscape_score += 8
+    elif avg_length < 10:
+        landscape_score -= 10
+    
+    # Factor 5: Row to column ratio
+    if row_count > col_count * 4:
+        landscape_score -= 15  # Very tall table, portrait might be better
+    elif col_count > row_count * 2:
+        landscape_score += 15  # Very wide table
+    
+    # Determine orientation with some randomness for diversity
+    # Score > 20: strongly favor landscape
+    # Score < -20: strongly favor portrait
+    # In between: probabilistic
+    if landscape_score > 30:
+        orientation = 'landscape'
+        orientation_probability = 0.9
+    elif landscape_score > 10:
+        orientation = 'landscape' if random.random() < 0.75 else 'portrait'
+        orientation_probability = 0.75
+    elif landscape_score > -10:
+        # Balanced - could go either way
+        orientation = 'landscape' if random.random() < 0.5 else 'portrait'
+        orientation_probability = 0.5
+    elif landscape_score > -30:
+        orientation = 'portrait' if random.random() < 0.75 else 'landscape'
+        orientation_probability = 0.75
+    else:
+        orientation = 'portrait'
+        orientation_probability = 0.9
+    
+    # Calculate recommended width multiplier based on content
+    if orientation == 'landscape':
+        if has_long_text_column:
+            width_multiplier = 1.4
+        elif avg_length > 30:
+            width_multiplier = 1.2
+        else:
+            width_multiplier = 1.1
+    else:
+        if has_long_text_column:
+            width_multiplier = 1.0
+        elif avg_length < 15:
+            width_multiplier = 0.8
+        else:
+            width_multiplier = 0.9
+    
+    return {
+        'orientation': orientation,
+        'orientation_score': landscape_score,
+        'orientation_probability': orientation_probability,
+        'num_columns': col_count,
+        'num_rows': row_count,
+        'avg_cell_content_length': avg_length,
+        'max_cell_content_length': max_length,
+        'col_avg_lengths': col_avg_lengths,
+        'total_content_width': total_content_width,
+        'has_long_text_column': has_long_text_column,
+        'recommended_target_width_multiplier': width_multiplier,
+        'rows_content': rows_content,  # Cell content by rows for content-aware alignment
+    }
 
 
 class TableStructureParser(HTMLParser):
@@ -75,10 +245,11 @@ class TableStyler(HTMLParser):
     Applies styling to raw HTML table based on configuration.
     This is the exact logic from html_render.py TableStyler.
     """
-    def __init__(self, config: StyleConfig, structure: Dict):
+    def __init__(self, config: StyleConfig, structure: Dict, table_analysis: Dict = None):
         super().__init__()
         self.config = config
         self.structure = structure
+        self.table_analysis = table_analysis or {}
         self.result = []
         self.in_cell = False
         self.cell_content = []
@@ -89,6 +260,191 @@ class TableStyler(HTMLParser):
         
         # Cache column_colors for column-based pattern (avoids repeated getattr calls)
         self._column_colors = getattr(self.config.background, 'column_colors', {})
+        
+        # Random seed for this variation's line break decisions
+        # This ensures different variations have different line break patterns
+        self._line_break_seed = random.randint(0, 1000000)
+        
+        # Pre-compute consistent column alignments for data cells
+        # This ensures alignment is consistent within each column (realistic table behavior)
+        self._column_alignments = self._compute_column_alignments()
+        
+        # Pre-compute consistent vertical alignment for all data rows
+        # Headers can be different, but all data rows should have same vertical alignment
+        self._data_vertical_alignment = self._compute_data_vertical_alignment()
+        self._header_vertical_alignment = self._compute_header_vertical_alignment()
+        
+        # Pre-compute consistent font style for data cells
+        # All data cells should have same style (normal), except headers (bold) and colspan rows (can be bold)
+        self._data_font_weight = self._compute_data_font_weight()
+        self._data_font_style = self._compute_data_font_style()
+        
+        # Identify rows with colspan (these can have bold style like section headers)
+        self._colspan_rows = self._identify_colspan_rows()
+    
+    def _compute_column_alignments(self) -> Dict[int, str]:
+        """
+        Pre-compute alignment for each column based on content analysis.
+        This ensures data cells within a column have consistent alignment (realistic behavior).
+        
+        Strategy:
+        - Analyze all data cells in each column
+        - If column has mostly multi-word text (>2 words): favor 'left' (80%)
+        - If column has mostly numeric data: favor 'right' (60%) or 'center' (30%)
+        - If column has short text/mixed: use configured alignment or 'center'
+        """
+        column_alignments = {}
+        rows_content = self.table_analysis.get('rows_content', [])
+        num_columns = self.table_analysis.get('num_columns', 0)
+        
+        if not rows_content or num_columns == 0:
+            return column_alignments
+        
+        # Skip header rows (usually first 1-2 rows) for data alignment analysis
+        # Headers have their own alignment
+        data_rows = rows_content[1:] if len(rows_content) > 1 else rows_content
+        
+        for col_idx in range(num_columns):
+            # Collect all cell contents for this column
+            col_cells = []
+            for row in data_rows:
+                if col_idx < len(row) and row[col_idx]:
+                    col_cells.append(row[col_idx])
+            
+            if not col_cells:
+                continue
+            
+            # Analyze column content
+            text_cells = 0  # Cells with 3+ words (descriptive text)
+            numeric_cells = 0  # Cells with only numbers/symbols
+            short_cells = 0  # Cells with 1-2 words
+            
+            for cell in col_cells:
+                words = cell.split()
+                word_count = len(words)
+                is_numeric = bool(re.match(r'^[\d\s.,%-]+$', cell.strip()))
+                
+                if is_numeric:
+                    numeric_cells += 1
+                elif word_count >= 3:
+                    text_cells += 1
+                else:
+                    short_cells += 1
+            
+            total = len(col_cells)
+            
+            # Decide alignment based on dominant content type
+            if text_cells / total > 0.4:
+                # Column has significant text content - strongly favor left
+                alignment = 'left' if random.random() < 0.85 else 'center'
+            elif numeric_cells / total > 0.5:
+                # Column is mostly numeric - favor right or center
+                r = random.random()
+                if r < 0.55:
+                    alignment = 'right'
+                elif r < 0.85:
+                    alignment = 'center'
+                else:
+                    alignment = 'left'
+            elif short_cells / total > 0.6:
+                # Column has short items - center or left
+                alignment = 'center' if random.random() < 0.6 else 'left'
+            else:
+                # Mixed content - use config default or center
+                if self.config.alignment.data_horizontal:
+                    alignment = self.config.alignment.data_horizontal
+                else:
+                    alignment = 'center' if random.random() < 0.5 else 'left'
+            
+            column_alignments[col_idx] = alignment
+        
+        return column_alignments
+    
+    def _compute_data_vertical_alignment(self) -> str:
+        """
+        Compute a consistent vertical alignment for all data rows.
+        Real tables have consistent vertical alignment within data section.
+        
+        Weights (favor middle/top for realistic look):
+        - middle: 60% (most common in real tables)
+        - top: 30% (common for multi-line cells)
+        - bottom: 10% (rare)
+        """
+        if self.config.alignment.data_vertical:
+            return self.config.alignment.data_vertical
+        
+        r = random.random()
+        if r < 0.60:
+            return 'middle'
+        elif r < 0.90:
+            return 'top'
+        else:
+            return 'bottom'
+    
+    def _compute_header_vertical_alignment(self) -> str:
+        """
+        Compute vertical alignment for header rows.
+        Can be different from data rows.
+        
+        Weights (favor middle for headers):
+        - middle: 70% (most common for headers)
+        - bottom: 20% (sometimes used when headers are taller)
+        - top: 10% (rare for headers)
+        """
+        if self.config.alignment.header_vertical:
+            return self.config.alignment.header_vertical
+        
+        r = random.random()
+        if r < 0.70:
+            return 'middle'
+        elif r < 0.90:
+            return 'bottom'
+        else:
+            return 'top'
+    
+    def _compute_data_font_weight(self) -> str:
+        """
+        Compute consistent font weight for all data cells.
+        Data cells should almost always be 'normal' weight.
+        Headers are handled separately (usually bold).
+        
+        Weights:
+        - normal: 95% (standard for data)
+        - bold: 5% (rare - only for emphasis tables)
+        """
+        if self.config.font.weight and self.config.font.weight != 'random':
+            return self.config.font.weight
+        
+        return 'normal' if random.random() < 0.95 else 'bold'
+    
+    def _compute_data_font_style(self) -> str:
+        """
+        Compute consistent font style for all data cells.
+        Data cells should almost always be 'normal' style.
+        All italic or mixed styles are weird and should be very rare.
+        
+        Weights:
+        - normal: 98% (standard)
+        - italic: 2% (very rare)
+        """
+        if self.config.font.style and self.config.font.style != 'random':
+            return self.config.font.style
+        
+        return 'normal' if random.random() < 0.98 else 'italic'
+    
+    def _identify_colspan_rows(self) -> set:
+        """
+        Identify row indices that have colspan cells.
+        These rows can have bold styling (like section headers within table).
+        """
+        colspan_rows = set()
+        for row_idx, row_data in enumerate(self.structure.get('rows', [])):
+            cells = row_data.get('cells', [])
+            for cell in cells:
+                if cell.get('colspan', 1) > 1:
+                    colspan_rows.add(row_idx)
+                    break
+        return colspan_rows
         
     def _get_border_style(self, is_header: bool = False, is_footer: bool = False, 
                           row_idx: int = 0, col_idx: int = 0, has_colspan: bool = False) -> str:
@@ -166,114 +522,319 @@ class TableStyler(HTMLParser):
         
         return ''
     
-    def _get_font_style(self, is_header: bool = False, is_footer: bool = False) -> Dict[str, str]:
-        """Get font styling properties."""
+    def _get_font_style(self, is_header: bool = False, is_footer: bool = False, 
+                        row_idx: int = 0, has_colspan: bool = False) -> Dict[str, str]:
+        """
+        Get font styling properties.
+        
+        CONSISTENCY RULES:
+        - All data cells use same font-weight and font-style (pre-computed)
+        - Headers use bold weight
+        - Colspan rows (like section headers) can optionally be bold
+        - No mixing of bold/italic within same row
+        """
         styles = {
             'font-family': self.config.font.family,
             'font-size': self.config.font.size,
             'color': self.config.font.color
         }
         
+        # === FONT WEIGHT ===
         if is_header:
-            styles['font-weight'] = self.config.font.header_weight
+            # Headers are bold (standard)
+            styles['font-weight'] = self.config.font.header_weight or 'bold'
         elif is_footer:
-            styles['font-weight'] = self.config.font.footer_weight
-        elif self.config.font.weight == 'random':
-            styles['font-weight'] = random.choice(['normal', 'bold'])
+            styles['font-weight'] = self.config.font.footer_weight or 'normal'
+        elif row_idx in self._colspan_rows:
+            # Colspan rows can be bold (like section headers within table)
+            # 40% chance to be bold, 60% use same as data
+            if random.random() < 0.4:
+                styles['font-weight'] = 'bold'
+            else:
+                styles['font-weight'] = self._data_font_weight
         else:
-            styles['font-weight'] = self.config.font.weight
+            # Regular data cells - use pre-computed consistent weight
+            styles['font-weight'] = self._data_font_weight
         
+        # === FONT STYLE ===
         if is_header:
-            styles['font-style'] = self.config.font.header_style
+            styles['font-style'] = self.config.font.header_style or 'normal'
         elif is_footer:
-            styles['font-style'] = self.config.font.footer_style
-        elif self.config.font.style == 'random':
-            styles['font-style'] = random.choice(['normal', 'italic'])
+            styles['font-style'] = self.config.font.footer_style or 'normal'
         else:
-            styles['font-style'] = self.config.font.style
+            # All data cells use same font-style (pre-computed)
+            styles['font-style'] = self._data_font_style
         
-        if self.config.font.transform == 'random':
-            styles['text-transform'] = random.choice(['none', 'uppercase', 'lowercase', 'capitalize'])
-        elif self.config.font.transform != 'none':
+        # === TEXT TRANSFORM ===
+        # Keep simple - no random per-cell transforms
+        if self.config.font.transform and self.config.font.transform != 'none':
             styles['text-transform'] = self.config.font.transform
         
         return styles
     
-    def _get_alignment_style(self, col_idx: int = 0) -> Dict[str, str]:
-        """Get alignment styling properties."""
+    def _get_alignment_style(self, col_idx: int = 0, is_header: bool = False, cell_content: str = "") -> Dict[str, str]:
+        """Get alignment styling properties.
+        
+        Uses pre-computed column alignments for consistency within columns.
+        Headers get separate alignment (favor center).
+        Small probability of per-cell variation for realism.
+        
+        Args:
+            col_idx: Column index for column-specific alignment
+            is_header: Whether this is a header cell (uses header_horizontal/vertical)
+            cell_content: The text content of the cell (not used directly anymore, column analysis done at init)
+        """
         styles = {}
         
+        # === HORIZONTAL ALIGNMENT ===
+        
+        # Priority 1: Explicit column alignments from config
         if col_idx in self.config.alignment.column_alignments:
             styles['text-align'] = self.config.alignment.column_alignments[col_idx]
+        
+        # Priority 2: Header alignment (headers can differ from data)
+        elif is_header:
+            if self.config.alignment.header_horizontal:
+                styles['text-align'] = self.config.alignment.header_horizontal
+            else:
+                # Default: headers favor center (80%), sometimes left (20%)
+                styles['text-align'] = 'center' if random.random() < 0.8 else 'left'
+        
+        # Priority 3: Use pre-computed column alignment for data cells (consistent within column)
+        elif col_idx in self._column_alignments:
+            base_alignment = self._column_alignments[col_idx]
+            
+            # Small chance (5%) of per-cell variation for natural imperfection
+            if random.random() < 0.05:
+                # Slight variation - don't stray too far from base
+                if base_alignment == 'left':
+                    styles['text-align'] = 'center'
+                elif base_alignment == 'right':
+                    styles['text-align'] = 'center'
+                else:  # center
+                    styles['text-align'] = 'left' if random.random() < 0.5 else 'right'
+            else:
+                styles['text-align'] = base_alignment
+        
+        # Priority 4: Fallback to config data_horizontal or horizontal
+        elif self.config.alignment.data_horizontal:
+            styles['text-align'] = self.config.alignment.data_horizontal
         elif self.config.alignment.horizontal == 'random':
+            # For random, pick once and use consistently (already handled by column alignments above)
             styles['text-align'] = random.choice(['left', 'center', 'right'])
         else:
             styles['text-align'] = self.config.alignment.horizontal
         
-        if self.config.alignment.vertical == 'random':
-            styles['vertical-align'] = random.choice(['top', 'middle', 'bottom'])
+        # === VERTICAL ALIGNMENT ===
+        # Use pre-computed consistent vertical alignment
+        # Headers and data rows can differ, but each section is consistent
+        
+        if is_header:
+            # Use pre-computed header vertical alignment (consistent for all headers)
+            styles['vertical-align'] = self._header_vertical_alignment
         else:
-            styles['vertical-align'] = self.config.alignment.vertical
+            # Use pre-computed data vertical alignment (consistent for all data rows)
+            # Small chance (3%) of per-cell variation for natural imperfection
+            if random.random() < 0.03:
+                # Slight variation
+                alts = ['top', 'middle', 'bottom']
+                alts.remove(self._data_vertical_alignment) if self._data_vertical_alignment in alts else None
+                styles['vertical-align'] = random.choice(alts) if alts else 'middle'
+            else:
+                styles['vertical-align'] = self._data_vertical_alignment
         
         return styles
     
+    def _estimate_text_width(self, text: str, font_size: str) -> int:
+        """
+        Estimate text width in pixels based on font size.
+        Uses approximate character width ratio (varies by font, but ~0.5-0.6 of font size for average).
+        """
+        try:
+            size_px = int(font_size.replace('px', ''))
+        except (ValueError, AttributeError):
+            size_px = 24
+        
+        # Average character width is roughly 0.5-0.6 of font size for proportional fonts
+        # Use 0.55 as a balanced estimate
+        avg_char_width = size_px * 0.55
+        return int(len(text) * avg_char_width)
+    
+    def _get_target_column_width(self, font_size: str, text: str = "") -> int:
+        """
+        Get a reasonable target column width based on font size and table orientation.
+        Uses table analysis to adjust width for portrait vs landscape.
+        
+        Returns target width in pixels.
+        """
+        try:
+            size_px = int(font_size.replace('px', ''))
+        except (ValueError, AttributeError):
+            size_px = 24
+        
+        # Base target characters based on font size
+        if size_px <= 18:
+            base_target_chars = 22
+        elif size_px <= 26:
+            base_target_chars = 20
+        elif size_px <= 34:
+            base_target_chars = 17
+        else:
+            base_target_chars = 14
+        
+        # Adjust based on orientation from table analysis
+        orientation = self.table_analysis.get('orientation', 'landscape')
+        width_multiplier = self.table_analysis.get('recommended_target_width_multiplier', 1.0)
+        
+        # Apply orientation adjustment
+        if orientation == 'landscape':
+            # Landscape: allow wider columns
+            target_chars = int(base_target_chars * width_multiplier * 1.2)
+        else:
+            # Portrait: prefer narrower columns, more line breaks
+            target_chars = int(base_target_chars * width_multiplier * 0.9)
+        
+        # Add some randomness per variation (±15%)
+        random.seed(self._line_break_seed + hash(text[:20]) if text else self._line_break_seed)
+        variation_factor = random.uniform(0.85, 1.15)
+        target_chars = int(target_chars * variation_factor)
+        
+        # Reset random state
+        random.seed()
+        
+        return int(target_chars * size_px * 0.55)
+    
     def _apply_random_line_breaks(self, text: str) -> str:
-        """Randomly insert <br> tags into text based on configuration."""
+        """
+        Intelligently insert <br> tags based on estimated column width and table orientation.
+        
+        Logic:
+        1. Estimate text width based on font size
+        2. Consider table orientation (landscape = wider columns, portrait = narrower)
+        3. If text exceeds target column width, break to fit
+        4. Only break at word boundaries (spaces)
+        5. Never break single words/numbers
+        6. Ensure each line has reasonable number of words (min 3 words per line)
+        7. Don't break if it would create weird short lines
+        """
         if not self.config.spacing.random_line_breaks:
             return text
         
-        words = text.split()
-        if len(words) <= 1:
+        # Don't break if no spaces (single word/number)
+        if ' ' not in text:
             return text
         
-        # Get configuration values with defaults
-        probability = getattr(self.config.spacing, 'line_break_probability', 0.15)
-        min_words_before = getattr(self.config.spacing, 'min_words_before_break', 3)
-        max_breaks = getattr(self.config.spacing, 'max_breaks_per_cell', 2)
-        break_on_punct = getattr(self.config.spacing, 'break_on_punctuation', False)
-        prefer_natural = getattr(self.config.spacing, 'prefer_natural_breaks', False)
+        words = text.split()
+        total_words = len(words)
         
+        if total_words <= 1:
+            return text
+        
+        # Get font size and calculate target width (with orientation awareness)
+        font_size = self.config.font.size
+        target_width = self._get_target_column_width(font_size, text)
+        
+        # Estimate total text width
+        total_width = self._estimate_text_width(text, font_size)
+        
+        # If text fits in target width, no need to break
+        if total_width <= target_width:
+            return text
+        
+        # Calculate how many lines we'd need
+        num_lines_needed = max(1, (total_width + target_width - 1) // target_width)
+        
+        # === KEY CHECK: Ensure reasonable words per line ===
+        # Each line should have at least 3 words for readability
+        min_words_per_line = 3
+        max_reasonable_lines = total_words // min_words_per_line
+        
+        if max_reasonable_lines < 2:
+            # Not enough words to make sensible multi-line, don't break
+            return text
+        
+        # Cap lines to reasonable amount
+        num_lines = min(num_lines_needed, max_reasonable_lines, 4)
+        
+        # If only 1 line after constraints, return as-is
+        if num_lines <= 1:
+            return text
+        
+        # Use consistent randomness for this text in this variation
+        random.seed(self._line_break_seed + hash(text))
+        
+        # Sometimes use fewer lines for variation (30% chance)
+        if num_lines > 2 and random.random() < 0.3:
+            num_lines = max(2, num_lines - 1)
+        
+        # Calculate target words per line (distribute evenly)
+        words_per_line = total_words // num_lines
+        
+        # Ensure minimum words per line
+        if words_per_line < min_words_per_line:
+            # Reduce number of lines
+            num_lines = total_words // min_words_per_line
+            if num_lines < 2:
+                random.seed()
+                return text
+            words_per_line = total_words // num_lines
+        
+        # Build lines with balanced word distribution
         result = []
-        breaks_inserted = 0
-        words_since_break = 0
+        current_line = []
         
         for i, word in enumerate(words):
-            result.append(word)
-            words_since_break += 1
+            current_line.append(word)
             
-            if i < len(words) - 1:
-                # Check if we can add more breaks
-                if breaks_inserted >= max_breaks:
-                    result.append(' ')
-                    continue
+            # Decide if we should break here
+            words_in_current_line = len(current_line)
+            words_remaining = total_words - i - 1
+            lines_remaining = num_lines - len(result) - 1
+            
+            should_break = False
+            
+            if lines_remaining > 0:
+                # Check if we have enough words for this line
+                if words_in_current_line >= words_per_line:
+                    # Make sure remaining words can fill remaining lines
+                    min_remaining_needed = lines_remaining * min_words_per_line
+                    if words_remaining >= min_remaining_needed:
+                        should_break = True
                 
-                # Check minimum words before break
-                if words_since_break < min_words_before:
-                    result.append(' ')
-                    continue
-                
-                # Determine if we should break here
-                should_break = False
-                
-                # Prefer natural breaks (after punctuation)
-                if prefer_natural or break_on_punct:
-                    if word.endswith((',', ';', ':', '-', '–', '—')):
-                        should_break = random.random() < (probability * 2)  # Higher chance at punctuation
-                    elif word.endswith('.') and i < len(words) - 2:  # Not at end of sentence
-                        should_break = random.random() < (probability * 1.5)
-                
-                # Random break check
-                if not should_break and random.random() < probability:
+                # Also break if current line is getting too wide
+                current_line_text = ' '.join(current_line)
+                current_width = self._estimate_text_width(current_line_text, font_size)
+                if current_width > target_width * 0.9 and words_remaining >= min_words_per_line:
                     should_break = True
-                
-                if should_break:
-                    result.append('<br/>')
-                    breaks_inserted += 1
-                    words_since_break = 0
-                else:
-                    result.append(' ')
+            
+            if should_break:
+                result.append(' '.join(current_line))
+                current_line = []
         
-        return ''.join(result).strip()
+        # Add remaining words
+        if current_line:
+            # Check if last line is too short (less than 2 words) and we have previous lines
+            if len(current_line) < 2 and result:
+                # Merge with previous line
+                last_line_words = result[-1].split()
+                result[-1] = ' '.join(last_line_words + current_line)
+            else:
+                result.append(' '.join(current_line))
+        
+        # Reset random state
+        random.seed()
+        
+        # Final validation: don't return weird results
+        if len(result) <= 1:
+            return text
+        
+        # Check that no line is too short (except last line can be shorter)
+        for i, line in enumerate(result[:-1]):
+            if len(line.split()) < 2:
+                # Something went wrong, return original
+                return text
+        
+        return '<br/>'.join(result)
     
     def handle_starttag(self, tag, attrs):
         if tag in ['thead', 'tbody', 'tfoot']:
@@ -329,10 +890,23 @@ class TableStyler(HTMLParser):
             if bg_color:
                 cell_styles['background-color'] = bg_color
             
-            font_styles = self._get_font_style(is_header, is_footer)
+            # Font style with row context for colspan handling
+            font_styles = self._get_font_style(
+                is_header, is_footer, 
+                self.row_index_global, 
+                has_colspan
+            )
             cell_styles.update(font_styles)
             
-            alignment_styles = self._get_alignment_style(self.current_cell_index)
+            # Get cell content from pre-analyzed table data for content-aware alignment
+            cell_text = ""
+            rows_content = self.table_analysis.get('rows_content', [])
+            if self.row_index_global < len(rows_content):
+                row_data = rows_content[self.row_index_global]
+                if self.current_cell_index < len(row_data):
+                    cell_text = row_data[self.current_cell_index]
+            
+            alignment_styles = self._get_alignment_style(self.current_cell_index, is_header, cell_text)
             cell_styles.update(alignment_styles)
             
             cell_styles['padding'] = self.config.spacing.padding
@@ -398,30 +972,37 @@ class TableRenderer:
     This extends the logic from html_render.py TableRenderer.
     """
     
-    def __init__(self, style_config: Optional[StyleConfig] = None):
+    def __init__(self, style_config: Optional[StyleConfig] = None, table_analysis: Dict = None):
         """
         Initialize renderer with a style configuration.
         
         Args:
             style_config: StyleConfig instance. If None, uses default config.
+            table_analysis: Optional pre-computed table analysis for orientation/layout decisions.
         """
         self.config = style_config or StyleConfig.create_default()
+        self.table_analysis = table_analysis or {}
     
-    def apply_styles_to_raw_table(self, raw_table_html: str) -> str:
+    def apply_styles_to_raw_table(self, raw_table_html: str, table_analysis: Dict = None) -> str:
         """
         Apply configured styles to raw HTML table.
         
         Args:
             raw_table_html: Raw HTML table string without styling
+            table_analysis: Optional table analysis for orientation-aware styling
             
         Returns:
             Fully styled HTML table string with annotations
         """
+        # Use provided analysis or compute it
+        analysis = table_analysis or self.table_analysis or analyze_table_for_orientation(raw_table_html)
+        
         structure_parser = TableStructureParser()
         structure_parser.feed(raw_table_html)
         structure = structure_parser.get_structure()
         
-        styler = TableStyler(self.config, structure)
+        # Pass table analysis to styler for orientation-aware line breaks
+        styler = TableStyler(self.config, structure, analysis)
         styler.feed(raw_table_html)
         
         return styler.get_styled_html()
@@ -433,7 +1014,8 @@ class TableRenderer:
         draw_bboxes: bool = True,
         save_debug_html: bool = False,
         page_width: int = 2480,
-        page_height: int = 3508
+        page_height: int = 3508,
+        dynamic_size: bool = True
     ) -> Dict[str, Path]:
         """
         Render single HTML to images and annotations.
@@ -443,8 +1025,9 @@ class TableRenderer:
             output_dir: Output directory
             draw_bboxes: Whether to draw bounding boxes on image
             save_debug_html: Whether to save debug HTML file
-            page_width: Page width in pixels
-            page_height: Page height in pixels
+            page_width: Page width in pixels (used as max if dynamic_size=True)
+            page_height: Page height in pixels (used as max if dynamic_size=True)
+            dynamic_size: If True, image size will be adjusted to fit table dimensions
             
         Returns:
             Dictionary with paths to generated files
@@ -477,7 +1060,8 @@ class TableRenderer:
             page_width=page_width,
             page_height=page_height,
             draw_bboxes=False,
-            save_debug_html=False
+            save_debug_html=False,
+            dynamic_size=dynamic_size
         )
         result_paths['image_clean'] = image_path_clean
         result_paths['annotation'] = annotation_path
@@ -493,7 +1077,8 @@ class TableRenderer:
                 page_width=page_width,
                 page_height=page_height,
                 draw_bboxes=True,
-                save_debug_html=save_debug_html
+                save_debug_html=save_debug_html,
+                dynamic_size=dynamic_size
             )
             result_paths['image_annotated'] = image_path_annotated
         
@@ -512,7 +1097,9 @@ class TableRenderer:
         output_dir: Path,
         style_variations: int = 1,
         draw_bboxes: bool = True,
-        save_debug_html: bool = False
+        save_debug_html: bool = False,
+        dynamic_size: bool = True,
+        fully_random: bool = True
     ) -> List[Dict]:
         """
         Render multiple HTMLs with optional style variations.
@@ -523,6 +1110,8 @@ class TableRenderer:
             style_variations: Number of style variations per HTML
             draw_bboxes: Whether to draw bounding boxes
             save_debug_html: Whether to save debug HTML
+            dynamic_size: If True, image size will be adjusted to fit table dimensions
+            fully_random: If True, each variation creates completely new random style
             
         Returns:
             List of dictionaries with paths to generated files
@@ -533,23 +1122,33 @@ class TableRenderer:
         for html_file in html_files:
             html_file = Path(html_file)
             
+            # Read HTML content once for analysis
+            with open(html_file, 'r', encoding='utf-8') as f:
+                raw_table_html = f.read()
+            
+            # Analyze table structure for orientation decision (once per HTML file)
+            table_analysis = analyze_table_for_orientation(raw_table_html)
+            
             for style_idx in range(style_variations):
-                # Use variation config if multiple styles
+                # Create new random style for each variation (not just small tweaks)
                 if style_variations > 1:
-                    config = self.config.create_variation()
-                    renderer = TableRenderer(config)
+                    if fully_random:
+                        # Create completely new random style
+                        config = StyleConfig.create_random()
+                    else:
+                        # Create small variation of base style
+                        config = self.config.create_variation()
+                    # Pass table analysis to renderer
+                    renderer = TableRenderer(config, table_analysis)
                 else:
                     renderer = self
+                    renderer.table_analysis = table_analysis
                 
                 # Modify base name for style variations
                 if style_variations > 1:
                     base_name = f"{html_file.stem}_style_{style_idx}"
                 else:
                     base_name = html_file.stem
-                
-                # Read and render
-                with open(html_file, 'r', encoding='utf-8') as f:
-                    raw_table_html = f.read()
                 
                 # Create paths
                 (output_dir / 'images' / 'without_annotation').mkdir(parents=True, exist_ok=True)
@@ -563,7 +1162,8 @@ class TableRenderer:
                     'source': html_file,
                     'style_index': style_idx,
                     'image_clean': image_path_clean,
-                    'annotation': annotation_path
+                    'annotation': annotation_path,
+                    'table_analysis': table_analysis
                 }
                 
                 # Render without bboxes
@@ -572,7 +1172,8 @@ class TableRenderer:
                     str(image_path_clean),
                     str(annotation_path),
                     draw_bboxes=False,
-                    save_debug_html=False
+                    save_debug_html=False,
+                    dynamic_size=dynamic_size
                 )
                 
                 # Render with bboxes if requested
@@ -584,7 +1185,8 @@ class TableRenderer:
                         str(image_path_annotated),
                         str(annotation_path),
                         draw_bboxes=True,
-                        save_debug_html=save_debug_html
+                        save_debug_html=save_debug_html,
+                        dynamic_size=dynamic_size
                     )
                     result['image_annotated'] = image_path_annotated
                 
@@ -600,7 +1202,9 @@ class TableRenderer:
         page_width: int = 2480,
         page_height: int = 3508,
         draw_bboxes: bool = True,
-        save_debug_html: bool = True
+        save_debug_html: bool = True,
+        dynamic_size: bool = True,
+        size_margin: int = 100
     ) -> Dict[str, Any]:
         """
         Render a raw HTML table to image with annotations.
@@ -610,19 +1214,21 @@ class TableRenderer:
             raw_table_html: Raw HTML table string without styling
             output_image_path: Path for output PNG image
             output_annotation_path: Path for output JSON annotations
-            page_width: Page width in pixels (default: A4 at 300 DPI)
-            page_height: Page height in pixels (default: A4 at 300 DPI)
+            page_width: Page width in pixels (default: A4 at 300 DPI, used as max if dynamic_size=True)
+            page_height: Page height in pixels (default: A4 at 300 DPI, used as max if dynamic_size=True)
             draw_bboxes: Whether to draw bounding boxes on image
             save_debug_html: Whether to save debug HTML file
+            dynamic_size: If True, image size will be adjusted to fit table dimensions
+            size_margin: Margin around the table when using dynamic sizing
             
         Returns:
             Dictionary containing annotation data
         """
         os.makedirs(os.path.dirname(output_image_path) or '.', exist_ok=True)
-        
-        styled_table = self.apply_styles_to_raw_table(raw_table_html)
-        
-        margin = 100
+        updated_raw_table_html = raw_table_html.replace('<br>', '**line-break**')
+        styled_table = self.apply_styles_to_raw_table(updated_raw_table_html)
+        styled_table = styled_table.replace('**line-break**', '<br>')
+        margin = size_margin
         table_bounds = {
             'x': margin,
             'y': margin,
@@ -645,7 +1251,10 @@ class TableRenderer:
             output_annotation_path,
             page_width,
             page_height,
-            draw_bboxes
+            draw_bboxes,
+            dynamic_size=dynamic_size,
+            size_margin=margin,
+            raw_table_html=raw_table_html
         )
         
         with open(output_annotation_path, 'r', encoding='utf-8') as f:
@@ -653,11 +1262,10 @@ class TableRenderer:
     
     def _wrap_with_position(self, table_html: str, bounds: Dict[str, int]) -> str:
         """Wrap table with positioning container."""
+        # Remove fixed width/height and overflow:hidden to allow dynamic sizing
         container_style = (
             f"position: absolute; "
             f"left: {bounds['x']}px; top: {bounds['y']}px; "
-            f"width: {bounds['width']}px; height: {bounds['height']}px; "
-            f"overflow: hidden;"
         )
         return f'<div class="annotated-element" data-element-type="table" style="{container_style}">{table_html}</div>'
     
@@ -670,15 +1278,13 @@ class TableRenderer:
             <meta charset="UTF-8">
             <title>Table Annotation</title>
             <style>
-                body {{ margin: 0; padding: 0; background-color: #CCC; }}
+                body {{ margin: 0; padding: 0; background-color: #FFF; }}
                 .page {{
-                    width: {width}px;
-                    height: {height}px;
+                    min-width: {width}px;
+                    min-height: {height}px;
                     background-color: white;
                     position: relative;
-                    box-shadow: 0 0 10px rgba(0,0,0,0.5);
-                    margin: 20px auto;
-                    overflow: hidden;
+                    margin: 0;
                 }}
                 .annotated-element {{ box-sizing: border-box; }}
                 .bbox-content-target {{ /* Target for bbox measurements */ }}
@@ -697,6 +1303,7 @@ async def render_raw_table_with_config(
     output_image_path: str,
     output_annotation_path: str,
     config: Optional[StyleConfig] = None,
+    dynamic_size: bool = True,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -707,6 +1314,7 @@ async def render_raw_table_with_config(
         output_image_path: Output PNG path
         output_annotation_path: Output JSON path
         config: StyleConfig instance (optional)
+        dynamic_size: If True, image size will be adjusted to fit table dimensions
         **kwargs: Additional arguments passed to renderer
         
     Returns:
@@ -717,5 +1325,6 @@ async def render_raw_table_with_config(
         raw_table_html,
         output_image_path,
         output_annotation_path,
+        dynamic_size=dynamic_size,
         **kwargs
     )

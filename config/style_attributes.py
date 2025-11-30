@@ -4,10 +4,15 @@ Style Attributes Module
 Comprehensive collection of style attributes for table rendering.
 This file contains various options for all styling aspects that can be
 randomly selected and combined based on user requirements.
+
+DESIGN PRINCIPLES:
+1. Color Contrast: All background/text color combinations ensure readability (WCAG AA minimum)
+2. Spacing Coherence: Font size, padding, and line-height are proportionally matched
+3. Alignment Consistency: Alignment rules prevent hard-to-read combinations
+4. Professional Combinations: Style combinations reflect real document design patterns
 """
 
-from typing import Dict, List, Any
-from dataclasses import dataclass, field
+from typing import Dict, List
 
 
 # =============================================================================
@@ -24,9 +29,11 @@ BORDER_STYLES = {
         'keep_outer_border': True,
         'keep_header_row_border': True,
         'keep_colspan_col_borders': True,
+        # Alignment constraint: full borders allow any alignment
+        'alignment_constraint': None,
     },
     'borderless': {
-        'description': 'No borders',
+        'description': 'No borders - requires consistent alignment and good spacing',
         'style': 'borderless',
         'remove_row_borders': True,
         'remove_col_borders': True,
@@ -34,6 +41,9 @@ BORDER_STYLES = {
         'keep_outer_border': False,
         'keep_header_row_border': False,
         'keep_colspan_col_borders': False,
+        # Alignment constraint: borderless needs consistent alignment to separate columns
+        'alignment_constraint': 'consistent',  # All columns same alignment
+        'min_padding': '12px',  # Needs more padding for visual separation
     },
     'outer_only': {
         'description': 'Only outer borders, no inner borders',
@@ -44,6 +54,8 @@ BORDER_STYLES = {
         'keep_outer_border': True,
         'keep_header_row_border': False,
         'keep_colspan_col_borders': False,
+        'alignment_constraint': 'consistent',
+        'min_padding': '10px',
     },
     'horizontal_only': {
         'description': 'Only horizontal (row) borders',
@@ -54,6 +66,9 @@ BORDER_STYLES = {
         'keep_outer_border': True,
         'keep_header_row_border': True,
         'keep_colspan_col_borders': False,
+        # Horizontal borders separate rows, so column alignment can vary but carefully
+        'alignment_constraint': 'column_aware',
+        'min_padding': '8px',
     },
     'vertical_only': {
         'description': 'Only vertical (column) borders',
@@ -64,9 +79,10 @@ BORDER_STYLES = {
         'keep_outer_border': True,
         'keep_header_row_border': False,
         'keep_colspan_col_borders': True,
+        'alignment_constraint': None,  # Vertical borders separate columns well
     },
     'header_border_only': {
-        'description': 'Borders only for header rows',
+        'description': 'Borders only under header row',
         'style': 'partly-borderless',
         'remove_row_borders': True,
         'remove_col_borders': True,
@@ -74,9 +90,11 @@ BORDER_STYLES = {
         'keep_outer_border': False,
         'keep_header_row_border': True,
         'keep_colspan_col_borders': False,
+        'alignment_constraint': 'consistent',
+        'min_padding': '10px',
     },
     'header_with_outer': {
-        'description': 'Outer borders plus header borders',
+        'description': 'Outer borders plus header borders - academic style',
         'style': 'partly-borderless',
         'remove_row_borders': True,
         'remove_col_borders': True,
@@ -84,249 +102,344 @@ BORDER_STYLES = {
         'keep_outer_border': True,
         'keep_header_row_border': True,
         'keep_colspan_col_borders': False,
-    },
-    'colspan_aware': {
-        'description': 'Keep column borders for colspan cells',
-        'style': 'partly-borderless',
-        'remove_row_borders': True,
-        'remove_col_borders': True,
-        'remove_inner_borders': False,
-        'keep_outer_border': True,
-        'keep_header_row_border': True,
-        'keep_colspan_col_borders': True,
+        'alignment_constraint': 'column_aware',
+        'min_padding': '8px',
     },
 }
 
-BORDER_WIDTHS = ['1px', '2px', '3px', '4px', '5px']
+# Border widths - grouped by use case
+BORDER_WIDTHS_LIGHT = ['1px', '1.5px']
+BORDER_WIDTHS_MEDIUM = ['2px', '2.5px']
+BORDER_WIDTHS_HEAVY = ['3px', '4px']
+BORDER_WIDTHS = BORDER_WIDTHS_LIGHT + BORDER_WIDTHS_MEDIUM + BORDER_WIDTHS_HEAVY
 
+# Border colors - only dark colors that provide good contrast
 BORDER_COLORS = [
-    # Basic colors
-    'black', 'white', 'gray', 'darkgray', 'lightgray',
-    # Professional colors
-    '#000000', '#333333', '#444444', '#555555', '#666666', '#777777', '#888888', '#999999',
-    # Blue tones
-    '#1a237e', '#283593', '#303f9f', '#3949ab', '#3f51b5', '#5c6bc0', '#7986cb', '#9fa8da',
-    '#0d47a1', '#1565c0', '#1976d2', '#1e88e5', '#2196f3', '#42a5f5',
-    # Green tones
-    '#1b5e20', '#2e7d32', '#388e3c', '#43a047', '#4caf50', '#66bb6a',
-    # Red tones
-    '#b71c1c', '#c62828', '#d32f2f', '#e53935', '#f44336', '#ef5350',
-    # Warm tones
-    '#bf360c', '#e65100', '#ef6c00', '#f57c00', '#fb8c00',
-    # Neutral professional
-    '#212121', '#424242', '#616161', '#757575', '#9e9e9e', '#bdbdbd',
+    # Standard blacks and grays
+    '#000000', '#1a1a1a', '#2d2d2d', '#333333', '#404040', '#4d4d4d',
+    '#555555', '#666666', '#757575', '#808080',
+    # Professional dark blues
+    '#1a237e', '#283593', '#303f9f', '#0d47a1', '#1565c0',
+    # Professional dark greens
+    '#1b5e20', '#2e7d32', '#004d40',
+    # Professional dark reds/browns
+    '#b71c1c', '#c62828', '#3e2723', '#4e342e',
 ]
 
+
 # =============================================================================
-# BACKGROUND COLOR ATTRIBUTES
+# BACKGROUND COLOR ATTRIBUTES WITH CONTRAST-SAFE TEXT COLORS
 # =============================================================================
 
-BACKGROUND_PATTERNS = ['none', 'header', 'even-odd', 'first-last', 'striped', 'random', 'checkerboard', 'column-based']
+BACKGROUND_PATTERNS = ['none', 'header', 'even-odd', 'striped']
+# Removed problematic patterns: 'random', 'checkerboard', 'column-based', 'first-last'
+# These can create visual confusion in real documents
 
+# Each palette includes safe text colors that contrast well with backgrounds
 BACKGROUND_COLOR_PALETTES = {
-    'neutral': {
-        'header_color': '#E0E0E0',
-        'even_color': '#FFFFFF',
-        'odd_color': '#F5F5F5',
-        'first_color': '#EEEEEE',
-        'last_color': '#EEEEEE',
-        'random_colors': ['#F5F5F5', '#EEEEEE', '#E0E0E0', '#D5D5D5'],
-    },
-    'blue': {
-        'header_color': '#BBDEFB',
-        'even_color': '#FFFFFF',
-        'odd_color': '#E3F2FD',
-        'first_color': '#BBDEFB',
-        'last_color': '#90CAF9',
-        'random_colors': ['#E3F2FD', '#BBDEFB', '#90CAF9', '#64B5F6'],
-    },
-    'green': {
-        'header_color': '#C8E6C9',
-        'even_color': '#FFFFFF',
-        'odd_color': '#E8F5E9',
-        'first_color': '#C8E6C9',
-        'last_color': '#A5D6A7',
-        'random_colors': ['#E8F5E9', '#C8E6C9', '#A5D6A7', '#81C784'],
-    },
-    'warm': {
-        'header_color': '#FFECB3',
-        'even_color': '#FFFFFF',
-        'odd_color': '#FFF8E1',
-        'first_color': '#FFECB3',
-        'last_color': '#FFE082',
-        'random_colors': ['#FFF8E1', '#FFECB3', '#FFE082', '#FFD54F'],
-    },
-    'purple': {
-        'header_color': '#E1BEE7',
-        'even_color': '#FFFFFF',
-        'odd_color': '#F3E5F5',
-        'first_color': '#E1BEE7',
-        'last_color': '#CE93D8',
-        'random_colors': ['#F3E5F5', '#E1BEE7', '#CE93D8', '#BA68C8'],
-    },
-    'teal': {
-        'header_color': '#B2DFDB',
-        'even_color': '#FFFFFF',
-        'odd_color': '#E0F2F1',
-        'first_color': '#B2DFDB',
-        'last_color': '#80CBC4',
-        'random_colors': ['#E0F2F1', '#B2DFDB', '#80CBC4', '#4DB6AC'],
-    },
-    'orange': {
-        'header_color': '#FFE0B2',
-        'even_color': '#FFFFFF',
-        'odd_color': '#FFF3E0',
-        'first_color': '#FFE0B2',
-        'last_color': '#FFCC80',
-        'random_colors': ['#FFF3E0', '#FFE0B2', '#FFCC80', '#FFB74D'],
-    },
-    'pink': {
-        'header_color': '#F8BBD9',
-        'even_color': '#FFFFFF',
-        'odd_color': '#FCE4EC',
-        'first_color': '#F8BBD9',
-        'last_color': '#F48FB1',
-        'random_colors': ['#FCE4EC', '#F8BBD9', '#F48FB1', '#EC407A'],
-    },
-    'corporate_blue': {
-        'header_color': '#1976D2',
-        'even_color': '#FFFFFF',
-        'odd_color': '#F5F5F5',
-        'first_color': '#1976D2',
-        'last_color': '#1565C0',
-        'random_colors': ['#FFFFFF', '#F5F5F5', '#E3F2FD'],
-    },
-    'minimal': {
-        'header_color': '#FAFAFA',
+    'white_clean': {
+        'description': 'Clean white backgrounds - works with any text color',
+        'header_color': '#F5F5F5',
         'even_color': '#FFFFFF',
         'odd_color': '#FAFAFA',
         'first_color': '#F5F5F5',
         'last_color': '#F5F5F5',
         'random_colors': ['#FFFFFF', '#FAFAFA', '#F5F5F5'],
+        # Safe text colors for this palette (all dark)
+        'text_colors': ['#000000', '#1a1a1a', '#2d2d2d', '#333333', '#424242'],
+        'header_text_color': '#000000',
+    },
+    'light_gray': {
+        'description': 'Light gray tones - professional and neutral',
+        'header_color': '#E0E0E0',
+        'even_color': '#FFFFFF',
+        'odd_color': '#F5F5F5',
+        'first_color': '#EEEEEE',
+        'last_color': '#EEEEEE',
+        'random_colors': ['#F5F5F5', '#EEEEEE', '#E8E8E8'],
+        'text_colors': ['#000000', '#1a1a1a', '#2d2d2d', '#333333'],
+        'header_text_color': '#000000',
+    },
+    'soft_blue': {
+        'description': 'Soft blue tones - calming and professional',
+        'header_color': '#BBDEFB',
+        'even_color': '#FFFFFF',
+        'odd_color': '#E3F2FD',
+        'first_color': '#BBDEFB',
+        'last_color': '#BBDEFB',
+        'random_colors': ['#E3F2FD', '#BBDEFB'],
+        'text_colors': ['#0d47a1', '#1565c0', '#1a237e', '#1a1a1a', '#000000'],
+        'header_text_color': '#0d47a1',
+    },
+    'soft_green': {
+        'description': 'Soft green tones - natural and easy on eyes',
+        'header_color': '#C8E6C9',
+        'even_color': '#FFFFFF',
+        'odd_color': '#E8F5E9',
+        'first_color': '#C8E6C9',
+        'last_color': '#C8E6C9',
+        'random_colors': ['#E8F5E9', '#C8E6C9'],
+        'text_colors': ['#1b5e20', '#2e7d32', '#004d40', '#1a1a1a', '#000000'],
+        'header_text_color': '#1b5e20',
+    },
+    'warm_cream': {
+        'description': 'Warm cream and beige tones',
+        'header_color': '#FFF8E1',
+        'even_color': '#FFFFFF',
+        'odd_color': '#FFFDE7',
+        'first_color': '#FFF8E1',
+        'last_color': '#FFF8E1',
+        'random_colors': ['#FFFDE7', '#FFF8E1'],
+        'text_colors': ['#3e2723', '#4e342e', '#5d4037', '#1a1a1a', '#000000'],
+        'header_text_color': '#3e2723',
+    },
+    'soft_purple': {
+        'description': 'Soft purple/lavender tones',
+        'header_color': '#E1BEE7',
+        'even_color': '#FFFFFF',
+        'odd_color': '#F3E5F5',
+        'first_color': '#E1BEE7',
+        'last_color': '#E1BEE7',
+        'random_colors': ['#F3E5F5', '#E1BEE7'],
+        'text_colors': ['#4a148c', '#6a1b9a', '#7b1fa2', '#1a1a1a', '#000000'],
+        'header_text_color': '#4a148c',
+    },
+    'corporate_blue': {
+        'description': 'Corporate style with blue header',
+        'header_color': '#1976D2',
+        'even_color': '#FFFFFF',
+        'odd_color': '#F5F5F5',
+        'first_color': '#1976D2',
+        'last_color': '#1976D2',
+        'random_colors': ['#FFFFFF', '#F5F5F5'],
+        'text_colors': ['#000000', '#1a1a1a', '#2d2d2d'],
+        'header_text_color': '#FFFFFF',  # White text on dark blue header
+    },
+    'corporate_dark': {
+        'description': 'Dark corporate header style',
+        'header_color': '#37474F',
+        'even_color': '#FFFFFF',
+        'odd_color': '#ECEFF1',
+        'first_color': '#37474F',
+        'last_color': '#37474F',
+        'random_colors': ['#FFFFFF', '#ECEFF1'],
+        'text_colors': ['#000000', '#1a1a1a', '#263238'],
+        'header_text_color': '#FFFFFF',
+    },
+    'teal_accent': {
+        'description': 'Teal accent color scheme',
+        'header_color': '#B2DFDB',
+        'even_color': '#FFFFFF',
+        'odd_color': '#E0F2F1',
+        'first_color': '#B2DFDB',
+        'last_color': '#B2DFDB',
+        'random_colors': ['#E0F2F1', '#B2DFDB'],
+        'text_colors': ['#004d40', '#00695c', '#00796b', '#1a1a1a', '#000000'],
+        'header_text_color': '#004d40',
+    },
+    'minimal_white': {
+        'description': 'Ultra minimal - almost no color variation',
+        'header_color': '#FAFAFA',
+        'even_color': '#FFFFFF',
+        'odd_color': '#FFFFFF',
+        'first_color': '#FAFAFA',
+        'last_color': '#FAFAFA',
+        'random_colors': ['#FFFFFF'],
+        'text_colors': ['#000000', '#1a1a1a', '#333333'],
+        'header_text_color': '#000000',
     },
 }
 
+
 # =============================================================================
-# FONT ATTRIBUTES
+# FONT ATTRIBUTES - ORGANIZED BY USE CASE
 # =============================================================================
 
-FONT_FAMILIES = [
-    # Serif fonts
+# Fonts categorized by type
+FONTS_SERIF = [
     'Times New Roman, Times, serif',
     'Georgia, serif',
     'Palatino Linotype, Book Antiqua, Palatino, serif',
     'Cambria, serif',
     'Garamond, serif',
-    'Book Antiqua, serif',
-    
-    # Sans-serif fonts
+]
+
+FONTS_SANS_SERIF = [
     'Arial, Helvetica, sans-serif',
     'Helvetica Neue, Helvetica, Arial, sans-serif',
     'Verdana, Geneva, sans-serif',
     'Tahoma, Geneva, sans-serif',
-    'Trebuchet MS, sans-serif',
     'Calibri, sans-serif',
     'Segoe UI, sans-serif',
-    'Roboto, sans-serif',
-    'Open Sans, sans-serif',
-    'Lato, sans-serif',
-    
-    # Monospace fonts
+]
+
+FONTS_MONOSPACE = [
     'Courier New, Courier, monospace',
     'Consolas, Monaco, monospace',
-    'Lucida Console, Monaco, monospace',
 ]
 
-FONT_SIZES = [
-    '12px', '14px', '16px', '18px', '20px', '22px', '24px',
-    '26px', '28px', '30px', '32px', '34px', '36px', '38px',
-    '40px', '42px', '44px', '48px', '52px', '56px', '60px'
-]
+FONT_FAMILIES = FONTS_SERIF + FONTS_SANS_SERIF + FONTS_MONOSPACE
 
-FONT_WEIGHTS = ['normal', 'bold', 'lighter', 'bolder', '100', '200', '300', '400', '500', '600', '700', '800', '900']
+# Weighted font selection - favor Times New Roman, then Arial, then others
+# Each font repeated by its weight factor
+FONTS_WEIGHTED = (
+    ['Times New Roman, Times, serif'] * 35 +           # 35% - Most common
+    ['Arial, Helvetica, sans-serif'] * 25 +            # 25% - Second most common
+    ['Georgia, serif'] * 8 +                           # 8%
+    ['Calibri, sans-serif'] * 7 +                      # 7%
+    ['Verdana, Geneva, sans-serif'] * 5 +              # 5%
+    ['Helvetica Neue, Helvetica, Arial, sans-serif'] * 5 +  # 5%
+    ['Segoe UI, sans-serif'] * 4 +                     # 4%
+    ['Tahoma, Geneva, sans-serif'] * 3 +               # 3%
+    ['Palatino Linotype, Book Antiqua, Palatino, serif'] * 3 +  # 3%
+    ['Cambria, serif'] * 2 +                           # 2%
+    ['Garamond, serif'] * 2 +                          # 2%
+    ['Courier New, Courier, monospace'] * 1            # 1%
+)
 
-FONT_STYLES = ['normal', 'italic', 'oblique']
-
-FONT_TRANSFORMS = ['none', 'uppercase', 'lowercase', 'capitalize']
-
-FONT_COLORS = [
-    # Basic colors
-    'black', 'white', 'gray', 'darkgray',
-    # Professional colors
-    '#000000', '#111111', '#222222', '#333333', '#444444', '#555555',
-    # Blue tones
-    '#1a237e', '#283593', '#303f9f', '#0d47a1', '#1565c0', '#1976d2',
-    # Green tones
-    '#1b5e20', '#2e7d32', '#388e3c', '#004d40',
-    # Red/brown tones
-    '#b71c1c', '#c62828', '#bf360c', '#3e2723',
-    # Neutral
-    '#212121', '#424242', '#616161', '#757575',
-]
-
-# =============================================================================
-# ALIGNMENT ATTRIBUTES
-# =============================================================================
-
-HORIZONTAL_ALIGNMENTS = ['left', 'center', 'right', 'justify']
-
-VERTICAL_ALIGNMENTS = ['top', 'middle', 'bottom', 'baseline']
-
-# Common column alignment patterns
-COLUMN_ALIGNMENT_PATTERNS = {
-    'first_left_rest_center': {
-        0: 'left',
-        'default': 'center',
+# Font size tiers with corresponding spacing recommendations
+# Each tier includes: sizes, recommended padding range, recommended line-height range
+# FAVOR TIGHTER SPACING for realistic document look
+FONT_SIZE_TIERS = {
+    'small': {
+        'sizes': ['14px', '16px', '18px'],
+        'padding_range': ('3px', '5px'),       # Tight for small text
+        'line_height_range': ('1.2', '1.35'),  # Compact
+        'description': 'Small text - dense information tables',
     },
-    'first_left_rest_right': {
-        0: 'left',
-        'default': 'right',
+    'medium': {
+        'sizes': ['20px', '22px', '24px', '26px'],
+        'padding_range': ('5px', '8px'),       # Normal
+        'line_height_range': ('1.25', '1.4'),  # Standard
+        'description': 'Medium text - standard tables',
     },
-    'all_left': {
-        'default': 'left',
+    'large': {
+        'sizes': ['28px', '30px', '32px', '34px'],
+        'padding_range': ('6px', '10px'),      # Slightly more
+        'line_height_range': ('1.3', '1.45'),  # Standard-ish
+        'description': 'Large text - prominent tables',
     },
-    'all_center': {
-        'default': 'center',
-    },
-    'all_right': {
-        'default': 'right',
-    },
-    'alternating': {
-        'even': 'left',
-        'odd': 'right',
-    },
-    'numbers_right': {
-        0: 'left',
-        1: 'center',
-        2: 'center',
-        'default': 'right',
+    'xlarge': {
+        'sizes': ['36px', '38px', '40px'],
+        'padding_range': ('8px', '12px'),      # Reasonable
+        'line_height_range': ('1.35', '1.5'),  # Not too spacious
+        'description': 'Extra large text - hero tables, presentations',
     },
 }
 
+# Flat list for backward compatibility
+FONT_SIZES = []
+for tier in FONT_SIZE_TIERS.values():
+    FONT_SIZES.extend(tier['sizes'])
+
+FONT_WEIGHTS = ['normal', 'bold']  # Simplified - only commonly used weights
+
+FONT_STYLES = ['normal', 'italic']  # Simplified
+
+FONT_TRANSFORMS = ['none', 'uppercase', 'capitalize']  # Removed lowercase - rarely used
+
+# Font colors now depend on background - see BACKGROUND_COLOR_PALETTES
+FONT_COLORS = [
+    '#000000', '#1a1a1a', '#2d2d2d', '#333333', '#424242', '#555555',
+]
+
+
 # =============================================================================
-# SPACING ATTRIBUTES
+# ALIGNMENT ATTRIBUTES - WITH REALISTIC CONSTRAINTS
 # =============================================================================
 
-PADDING_VALUES = [
-    '2px', '4px', '5px', '6px', '8px', '10px', '12px', '14px', '16px', '18px', '20px',
-    '2px 4px', '4px 8px', '6px 12px', '8px 16px', '10px 20px',
-    '4px 8px 4px 8px', '6px 10px 6px 10px', '8px 12px 8px 12px',
-]
+HORIZONTAL_ALIGNMENTS = ['left', 'center', 'right']  # Removed 'justify' - problematic in tables
 
-CELL_SPACING_VALUES = ['0', '1px', '2px', '3px', '4px', '5px']
+VERTICAL_ALIGNMENTS = ['top', 'middle', 'bottom']  # Removed 'baseline' - rarely used in tables
 
-LINE_HEIGHT_VALUES = ['1.0', '1.2', '1.3', '1.4', '1.5', '1.6', '1.8', '2.0']
+# Realistic column alignment patterns
+# These patterns reflect how real documents align table columns
+COLUMN_ALIGNMENT_PATTERNS = {
+    'all_left': {
+        'description': 'All columns left-aligned - good for text-heavy tables',
+        'pattern': 'uniform',
+        'default_align': 'left',
+        'works_with_borderless': True,
+    },
+    'all_center': {
+        'description': 'All columns centered - good for short content',
+        'pattern': 'uniform',
+        'default_align': 'center',
+        'works_with_borderless': True,
+    },
+    'all_right': {
+        'description': 'All columns right-aligned - good for numeric tables',
+        'pattern': 'uniform',
+        'default_align': 'right',
+        'works_with_borderless': True,
+    },
+    'left_with_right_numbers': {
+        'description': 'Text left, numbers right - standard data table pattern',
+        'pattern': 'first_different',
+        'first_align': 'left',
+        'rest_align': 'right',
+        'works_with_borderless': False,  # Needs column borders
+    },
+    'left_with_center_header': {
+        'description': 'Header centered, data left-aligned',
+        'pattern': 'header_different',
+        'header_align': 'center',
+        'data_align': 'left',
+        'works_with_borderless': True,
+    },
+}
 
-ROW_HEIGHT_VALUES = [
-    'auto', '30px', '35px', '40px', '45px', '50px', '55px', '60px',
-    '70px', '80px', '90px', '100px'
-]
 
-COLUMN_WIDTH_VALUES = [
-    'auto', '50px', '60px', '70px', '80px', '90px', '100px',
-    '120px', '140px', '160px', '180px', '200px', '250px', '300px',
-    '10%', '15%', '20%', '25%', '30%', '40%', '50%'
-]
+# =============================================================================
+# SPACING ATTRIBUTES - COHERENT GROUPINGS
+# =============================================================================
+
+# Padding values grouped by intensity
+# FAVOR REALISTIC VALUES: Most real documents use tight to medium padding
+PADDING_TIGHT = ['3px', '4px', '5px']       # Compact tables
+PADDING_NORMAL = ['6px', '7px', '8px']      # Standard - MOST COMMON
+PADDING_MEDIUM = ['9px', '10px', '11px']    # Slightly spacious
+PADDING_GENEROUS = ['12px', '14px', '16px'] # Very spacious - less common
+
+PADDING_VALUES = PADDING_TIGHT + PADDING_NORMAL + PADDING_MEDIUM + PADDING_GENEROUS
+
+# Symmetric padding weights - FAVOR NORMAL/TIGHT values for realistic look
+# Weighted list: normal values repeated more
+PADDING_SYMMETRIC_WEIGHTED = (
+    PADDING_TIGHT * 2 +      # 20% tight
+    PADDING_NORMAL * 5 +     # 50% normal (most common)
+    PADDING_MEDIUM * 2 +     # 20% medium
+    PADDING_GENEROUS * 1     # 10% generous
+)
+
+# Simple list for compatibility
+PADDING_SYMMETRIC = ['4px', '5px', '6px', '7px', '8px', '10px', '12px']
+
+# Asymmetric padding - rarely used in real tables
+PADDING_ASYMMETRIC = ['4px 6px', '5px 8px', '6px 10px']
+
+CELL_SPACING_VALUES = ['0']  # Always 0 - most realistic
+
+# Line height values - FAVOR NORMAL/TIGHT for realistic look
+# 1.2-1.4 is standard, 1.5+ is spacious
+LINE_HEIGHT_VALUES = ['1.2', '1.25', '1.3', '1.35', '1.4']
+LINE_HEIGHT_TIGHT = ['1.15', '1.2', '1.25']
+LINE_HEIGHT_NORMAL = ['1.3', '1.35', '1.4']      # Most common
+LINE_HEIGHT_SPACIOUS = ['1.45', '1.5', '1.6']    # Less common
+
+# Weighted list for realistic selection
+LINE_HEIGHT_WEIGHTED = (
+    LINE_HEIGHT_TIGHT * 2 +     # 20% tight
+    LINE_HEIGHT_NORMAL * 6 +    # 60% normal (most common)
+    LINE_HEIGHT_SPACIOUS * 2    # 20% spacious
+)
+
+# Row heights - should be proportional to font size + padding
+ROW_HEIGHT_VALUES = ['auto']  # Let browser calculate - most realistic
+
+# Column widths - should be auto or percentage based
+COLUMN_WIDTH_VALUES = ['auto']  # Let browser calculate
+
 
 # =============================================================================
 # LINE BREAK CONFIGURATION
@@ -335,37 +448,80 @@ COLUMN_WIDTH_VALUES = [
 LINE_BREAK_CONFIGS = {
     'none': {
         'enabled': False,
-        'probability': 0.0,
-        'min_words_before_break': 999,
-        'max_breaks_per_cell': 0,
+        'description': 'No line breaks - content stays on single line',
     },
     'light': {
         'enabled': True,
-        'probability': 0.1,
-        'min_words_before_break': 4,
-        'max_breaks_per_cell': 1,
+        'description': 'Light line breaks - only break very long content',
+        # Width-based breaking will handle the logic
     },
     'moderate': {
         'enabled': True,
-        'probability': 0.2,
-        'min_words_before_break': 3,
-        'max_breaks_per_cell': 2,
-    },
-    'heavy': {
-        'enabled': True,
-        'probability': 0.35,
-        'min_words_before_break': 2,
-        'max_breaks_per_cell': 3,
+        'description': 'Moderate line breaks - break when exceeding column width',
     },
     'content_aware': {
         'enabled': True,
-        'probability': 0.25,
-        'min_words_before_break': 3,
-        'max_breaks_per_cell': 2,
-        'break_on_punctuation': True,
-        'prefer_natural_breaks': True,
+        'description': 'Content-aware breaks - intelligently break based on text width vs column width',
     },
 }
+
+
+# =============================================================================
+# COHERENT STYLE PROFILES
+# =============================================================================
+
+# These profiles ensure all style attributes work well together
+STYLE_PROFILES = {
+    'compact_data': {
+        'description': 'Compact style for data-dense tables',
+        'font_size_tier': 'small',
+        'padding_category': 'light',
+        'line_height': '1.3',
+        'border_style': 'full',
+        'alignment': 'left',
+    },
+    'standard_document': {
+        'description': 'Standard document table',
+        'font_size_tier': 'medium',
+        'padding_category': 'medium',
+        'line_height': '1.4',
+        'border_style': 'full',
+        'alignment': 'center',
+    },
+    'spacious_modern': {
+        'description': 'Modern spacious tables',
+        'font_size_tier': 'medium',
+        'padding_category': 'generous',
+        'line_height': '1.5',
+        'border_style': 'horizontal_only',
+        'alignment': 'left',
+    },
+    'academic_paper': {
+        'description': 'Academic paper style',
+        'font_size_tier': 'small',
+        'padding_category': 'light',
+        'line_height': '1.4',
+        'border_style': 'header_with_outer',
+        'alignment': 'center',
+    },
+    'presentation': {
+        'description': 'Presentation/large display',
+        'font_size_tier': 'xlarge',
+        'padding_category': 'generous',
+        'line_height': '1.5',
+        'border_style': 'full',
+        'alignment': 'center',
+    },
+    'minimal_clean': {
+        'description': 'Minimal clean design',
+        'font_size_tier': 'medium',
+        'padding_category': 'generous',
+        'line_height': '1.6',
+        'border_style': 'borderless',
+        'alignment': 'left',  # Consistent alignment required for borderless
+    },
+}
+
 
 # =============================================================================
 # STYLE PRESETS (Complete Configurations)
@@ -375,125 +531,177 @@ STYLE_PRESETS = {
     'default': {
         'description': 'Standard table style with borders and header highlighting',
         'border': BORDER_STYLES['full'],
-        'background': BACKGROUND_COLOR_PALETTES['neutral'],
+        'background': BACKGROUND_COLOR_PALETTES['light_gray'],
+        'background_pattern': 'header',
         'font_family': 'Times New Roman, Times, serif',
-        'font_size': '36px',
+        'font_size': '28px',
+        'font_color': '#000000',
         'alignment': 'center',
         'padding': '8px',
+        'line_height': '1.4',
     },
     'modern': {
         'description': 'Clean modern style with subtle colors',
         'border': BORDER_STYLES['horizontal_only'],
-        'background': BACKGROUND_COLOR_PALETTES['minimal'],
+        'background': BACKGROUND_COLOR_PALETTES['minimal_white'],
+        'background_pattern': 'none',
         'font_family': 'Segoe UI, sans-serif',
-        'font_size': '32px',
+        'font_size': '24px',
+        'font_color': '#1a1a1a',
         'alignment': 'left',
         'padding': '12px',
+        'line_height': '1.5',
     },
     'corporate': {
         'description': 'Professional corporate style',
         'border': BORDER_STYLES['full'],
         'background': BACKGROUND_COLOR_PALETTES['corporate_blue'],
+        'background_pattern': 'header',
         'font_family': 'Arial, Helvetica, sans-serif',
-        'font_size': '28px',
+        'font_size': '22px',
+        'font_color': '#000000',
         'alignment': 'center',
         'padding': '10px',
+        'line_height': '1.4',
     },
     'minimal': {
-        'description': 'Minimalist style with outer borders only',
+        'description': 'Minimalist style with clean lines',
         'border': BORDER_STYLES['outer_only'],
-        'background': BACKGROUND_COLOR_PALETTES['minimal'],
+        'background': BACKGROUND_COLOR_PALETTES['minimal_white'],
+        'background_pattern': 'none',
         'font_family': 'Helvetica Neue, Helvetica, Arial, sans-serif',
-        'font_size': '30px',
+        'font_size': '24px',
+        'font_color': '#333333',
         'alignment': 'left',
-        'padding': '16px',
+        'padding': '14px',
+        'line_height': '1.5',
     },
     'striped': {
         'description': 'Alternating row colors for readability',
         'border': BORDER_STYLES['horizontal_only'],
-        'background': BACKGROUND_COLOR_PALETTES['neutral'],
+        'background': BACKGROUND_COLOR_PALETTES['light_gray'],
         'background_pattern': 'striped',
         'font_family': 'Verdana, Geneva, sans-serif',
-        'font_size': '28px',
+        'font_size': '22px',
+        'font_color': '#1a1a1a',
         'alignment': 'left',
         'padding': '10px',
-    },
-    'colorful': {
-        'description': 'Vibrant colors for visual appeal',
-        'border': BORDER_STYLES['full'],
-        'background': BACKGROUND_COLOR_PALETTES['blue'],
-        'font_family': 'Tahoma, Geneva, sans-serif',
-        'font_size': '32px',
-        'alignment': 'center',
-        'padding': '8px',
+        'line_height': '1.4',
     },
     'academic': {
         'description': 'Traditional academic paper style',
         'border': BORDER_STYLES['header_with_outer'],
-        'background': BACKGROUND_COLOR_PALETTES['neutral'],
+        'background': BACKGROUND_COLOR_PALETTES['white_clean'],
+        'background_pattern': 'none',
         'font_family': 'Times New Roman, Times, serif',
-        'font_size': '24px',
+        'font_size': '18px',
+        'font_color': '#000000',
         'alignment': 'center',
         'padding': '6px',
+        'line_height': '1.3',
     },
     'financial': {
-        'description': 'Financial report style with right-aligned numbers',
+        'description': 'Financial report style',
         'border': BORDER_STYLES['full'],
-        'background': BACKGROUND_COLOR_PALETTES['neutral'],
+        'background': BACKGROUND_COLOR_PALETTES['white_clean'],
+        'background_pattern': 'header',
         'font_family': 'Calibri, sans-serif',
-        'font_size': '26px',
+        'font_size': '20px',
+        'font_color': '#000000',
         'alignment': 'right',
         'padding': '8px',
+        'line_height': '1.3',
+    },
+    'presentation': {
+        'description': 'Large text for presentations',
+        'border': BORDER_STYLES['full'],
+        'background': BACKGROUND_COLOR_PALETTES['soft_blue'],
+        'background_pattern': 'header',
+        'font_family': 'Arial, Helvetica, sans-serif',
+        'font_size': '36px',
+        'font_color': '#0d47a1',
+        'alignment': 'center',
+        'padding': '16px',
+        'line_height': '1.5',
     },
 }
 
+
 # =============================================================================
-# RANDOM SELECTION WEIGHTS
+# RANDOM SELECTION WEIGHTS - FAVOR REALISTIC COMBINATIONS
 # =============================================================================
 
-# Define weights for random selection (higher = more likely)
 RANDOM_WEIGHTS = {
     'border_styles': {
-        'full': 30,
-        'borderless': 10,
-        'outer_only': 15,
-        'horizontal_only': 20,
-        'vertical_only': 5,
-        'header_border_only': 10,
-        'header_with_outer': 15,
-        'colspan_aware': 5,
+        'full': 30,              # Full borders - common
+        'borderless': 25,        # No borders - common for modern docs
+        'horizontal_only': 20,   # Horizontal lines only
+        'header_with_outer': 15, # Header + outer borders
+        'outer_only': 5,         # Just outer frame
+        'vertical_only': 3,      # Rare
+        'header_border_only': 2, # Rare
     },
     'background_patterns': {
-        'none': 10,
-        'header': 30,
-        'even-odd': 25,
-        'first-last': 5,
-        'striped': 20,
-        'random': 5,
-        'checkerboard': 3,
-        'column-based': 2,
+        'none': 50,              # Most common - no background coloring
+        'header': 30,            # Header only has background
+        'even-odd': 15,          # Zebra striping
+        'striped': 5,            # Less common striping
     },
     'font_categories': {
+        'sans-serif': 55,
         'serif': 40,
-        'sans-serif': 50,
-        'monospace': 10,
+        'monospace': 5,
+    },
+    'font_size_tiers': {
+        'small': 15,             # Less common - too small for most uses
+        'medium': 50,            # Most common - standard readable size
+        'large': 28,             # Common for emphasis
+        'xlarge': 7,             # Rare - only for presentations/headers
     },
     'line_breaks': {
-        'none': 50,
-        'light': 25,
-        'moderate': 15,
-        'heavy': 5,
-        'content_aware': 5,
+        'none': 30,              # Some tables have short content - no breaks needed
+        'light': 25,             # Light breaking for moderate content
+        'content_aware': 35,     # Most common - break based on content width
+        'moderate': 10,          # More aggressive breaking
+    },
+    'background_palettes': {
+        'white_clean': 40,       # Pure white - most common
+        'minimal_white': 25,     # Minimal styling
+        'light_gray': 15,        # Light gray
+        'soft_blue': 5,          # Colored backgrounds less common
+        'soft_green': 4,
+        'warm_cream': 4,
+        'corporate_blue': 3,
+        'corporate_dark': 2,
+        'teal_accent': 1,
+        'soft_purple': 1,
+    },
+    # Text color weights - heavily favor black
+    'text_colors': {
+        'black': 75,             # Normal black text
+        'dark_gray': 15,         # Dark gray
+        'colored': 10,           # Colored text (from palette)
+    },
+    # Border color weights - favor black/dark
+    'border_colors': {
+        'black': 60,             # #000000
+        'dark_gray': 25,         # #333333, #444444
+        'medium_gray': 10,       # #666666, #888888
+        'light_gray': 5,         # #cccccc, #dddddd
     },
 }
 
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
 
 def get_font_category(font_family: str) -> str:
     """Determine the category of a font family."""
     font_lower = font_family.lower()
     if 'monospace' in font_lower or 'courier' in font_lower or 'consolas' in font_lower:
         return 'monospace'
-    elif 'serif' in font_lower and 'sans' not in font_lower:
+    elif any(x in font_lower for x in ['times', 'georgia', 'palatino', 'cambria', 'garamond']):
         return 'serif'
     else:
         return 'sans-serif'
@@ -501,4 +709,82 @@ def get_font_category(font_family: str) -> str:
 
 def get_fonts_by_category(category: str) -> List[str]:
     """Get fonts from a specific category."""
-    return [f for f in FONT_FAMILIES if get_font_category(f) == category]
+    if category == 'serif':
+        return FONTS_SERIF
+    elif category == 'sans-serif':
+        return FONTS_SANS_SERIF
+    elif category == 'monospace':
+        return FONTS_MONOSPACE
+    return FONTS_SANS_SERIF  # Default
+
+
+def get_contrasting_text_color(background_palette: str) -> str:
+    """Get a safe text color that contrasts with the background palette."""
+    if background_palette in BACKGROUND_COLOR_PALETTES:
+        palette = BACKGROUND_COLOR_PALETTES[background_palette]
+        return palette.get('text_colors', ['#000000'])[0]
+    return '#000000'
+
+
+def get_coherent_spacing(font_size: str) -> Dict[str, str]:
+    """Get coherent spacing values based on font size."""
+    # Extract numeric value from font size
+    try:
+        size_px = int(font_size.replace('px', ''))
+    except (ValueError, AttributeError):
+        size_px = 24  # Default
+    
+    # Find which tier this font size belongs to
+    # FAVOR TIGHTER/NORMAL spacing for realistic look
+    for tier_name, tier_data in FONT_SIZE_TIERS.items():
+        if font_size in tier_data['sizes']:
+            min_pad, max_pad = tier_data['padding_range']
+            min_lh, max_lh = tier_data['line_height_range']
+            # Use minimum values for tighter, more realistic look
+            # Add small random variation for diversity
+            import random
+            pad_values = [min_pad]  # Favor minimum
+            lh_values = [min_lh]    # Favor minimum
+            return {
+                'padding': random.choice(pad_values),
+                'line_height': random.choice(lh_values),
+            }
+    
+    # Default for unknown sizes - use TIGHTER values
+    if size_px <= 18:
+        return {'padding': '4px', 'line_height': '1.25'}
+    elif size_px <= 26:
+        return {'padding': '6px', 'line_height': '1.3'}
+    elif size_px <= 34:
+        return {'padding': '8px', 'line_height': '1.35'}
+    else:
+        return {'padding': '10px', 'line_height': '1.4'}
+
+
+def validate_alignment_for_border(border_style: str, alignment_pattern: str) -> bool:
+    """Check if alignment pattern is valid for the border style."""
+    if border_style not in BORDER_STYLES:
+        return True
+    
+    border_data = BORDER_STYLES[border_style]
+    constraint = border_data.get('alignment_constraint')
+    
+    if constraint is None:
+        return True  # No constraint
+    
+    if constraint == 'consistent':
+        # Must use uniform alignment
+        if alignment_pattern in COLUMN_ALIGNMENT_PATTERNS:
+            pattern_data = COLUMN_ALIGNMENT_PATTERNS[alignment_pattern]
+            return pattern_data.get('works_with_borderless', False)
+        return alignment_pattern in ['left', 'center', 'right']
+    
+    return True
+
+
+def get_safe_alignment_for_border(border_style: str) -> str:
+    """Get a safe alignment choice for the given border style."""
+    if border_style in ['borderless', 'outer_only', 'header_border_only']:
+        # These need consistent alignment - pick one uniformly
+        return 'left'  # Most readable for borderless
+    return 'center'  # Default for bordered tables

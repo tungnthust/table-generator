@@ -12,18 +12,18 @@ import json
 import random
 import argparse
 from dataclasses import dataclass, field, asdict
-from typing import Dict, List, Literal, Optional, Any, Union
+from typing import Dict, List, Literal, Optional, Any
 
 # Import style attributes
 from config.style_attributes import (
     BORDER_STYLES, BORDER_WIDTHS, BORDER_COLORS,
     BACKGROUND_PATTERNS, BACKGROUND_COLOR_PALETTES,
-    FONT_FAMILIES, FONT_SIZES, FONT_WEIGHTS, FONT_STYLES, FONT_TRANSFORMS, FONT_COLORS,
-    HORIZONTAL_ALIGNMENTS, VERTICAL_ALIGNMENTS, COLUMN_ALIGNMENT_PATTERNS,
-    PADDING_VALUES, CELL_SPACING_VALUES, LINE_HEIGHT_VALUES,
-    ROW_HEIGHT_VALUES, COLUMN_WIDTH_VALUES,
+    FONT_FAMILIES, FONT_SIZES, FONT_COLORS, FONTS_WEIGHTED,
+    FONTS_SERIF, FONTS_SANS_SERIF, FONTS_MONOSPACE,
+    HORIZONTAL_ALIGNMENTS, VERTICAL_ALIGNMENTS,
+    PADDING_VALUES, LINE_HEIGHT_VALUES, PADDING_SYMMETRIC_WEIGHTED, LINE_HEIGHT_WEIGHTED,
     LINE_BREAK_CONFIGS, STYLE_PRESETS, RANDOM_WEIGHTS,
-    get_font_category, get_fonts_by_category
+    get_fonts_by_category
 )
 
 
@@ -215,7 +215,13 @@ class StyleConfig:
                       line_break_config: Optional[str] = None,
                       randomize_all: bool = True) -> 'StyleConfig':
         """
-        Create a random style configuration with optional constraints.
+        Create a realistic random style configuration with coherent combinations.
+        
+        This method ensures:
+        - Background and text colors have sufficient contrast
+        - Borderless/minimal styles use consistent alignment
+        - Font size, padding, and line-height are proportionally matched
+        - Style combinations reflect real document design patterns
         
         Args:
             border_style: Specific border style to use (from BORDER_STYLES keys)
@@ -227,16 +233,23 @@ class StyleConfig:
         Returns:
             StyleConfig instance with random/specified options
         """
+        from config.style_attributes import (
+            FONT_SIZE_TIERS, get_coherent_spacing, PADDING_SYMMETRIC,
+            FONTS_SERIF, FONTS_SANS_SERIF, FONTS_MONOSPACE,
+            BORDER_WIDTHS_LIGHT, BORDER_WIDTHS_MEDIUM
+        )
+        
         config = cls()
         
-        # === BORDER CONFIGURATION ===
+        # === STEP 1: SELECT BORDER STYLE ===
         if border_style and border_style in BORDER_STYLES:
+            selected_border_style = border_style
             border_attrs = BORDER_STYLES[border_style]
         elif randomize_all:
-            # Weighted random selection
-            border_style = _weighted_choice(RANDOM_WEIGHTS['border_styles'])
-            border_attrs = BORDER_STYLES[border_style]
+            selected_border_style = _weighted_choice(RANDOM_WEIGHTS['border_styles'])
+            border_attrs = BORDER_STYLES[selected_border_style]
         else:
+            selected_border_style = 'full'
             border_attrs = BORDER_STYLES['full']
         
         config.border.style = border_attrs.get('style', 'border')
@@ -247,70 +260,146 @@ class StyleConfig:
         config.border.keep_header_row_border = border_attrs.get('keep_header_row_border', True)
         config.border.keep_colspan_col_borders = border_attrs.get('keep_colspan_col_borders', True)
         
+        # Border width and color - favor black/dark borders
         if randomize_all:
-            config.border.width = random.choice(BORDER_WIDTHS)
-            config.border.color = random.choice(BORDER_COLORS)
+            config.border.width = random.choice(BORDER_WIDTHS_LIGHT + BORDER_WIDTHS_MEDIUM)
+            # Use weighted border color selection
+            border_color_type = _weighted_choice(RANDOM_WEIGHTS.get('border_colors', {
+                'black': 60, 'dark_gray': 25, 'medium_gray': 10, 'light_gray': 5
+            }))
+            if border_color_type == 'black':
+                config.border.color = '#000000'
+            elif border_color_type == 'dark_gray':
+                config.border.color = random.choice(['#333333', '#444444'])
+            elif border_color_type == 'medium_gray':
+                config.border.color = random.choice(['#666666', '#888888'])
+            else:
+                config.border.color = random.choice(['#cccccc', '#dddddd'])
         
-        # === BACKGROUND CONFIGURATION ===
+        # === STEP 2: SELECT BACKGROUND PALETTE (with contrast-safe text colors) ===
         if background_palette and background_palette in BACKGROUND_COLOR_PALETTES:
+            palette_name = background_palette
             bg_palette = BACKGROUND_COLOR_PALETTES[background_palette]
         elif randomize_all:
-            palette_name = random.choice(list(BACKGROUND_COLOR_PALETTES.keys()))
-            bg_palette = BACKGROUND_COLOR_PALETTES[palette_name]
+            palette_name = _weighted_choice(RANDOM_WEIGHTS.get('background_palettes', {
+                'white_clean': 40, 'minimal_white': 25, 'light_gray': 15,
+                'soft_blue': 5, 'soft_green': 4, 'warm_cream': 4,
+                'corporate_blue': 3, 'corporate_dark': 2, 'teal_accent': 1, 'soft_purple': 1
+            }))
+            bg_palette = BACKGROUND_COLOR_PALETTES.get(palette_name, BACKGROUND_COLOR_PALETTES['white_clean'])
         else:
-            bg_palette = BACKGROUND_COLOR_PALETTES['neutral']
+            palette_name = 'white_clean'
+            bg_palette = BACKGROUND_COLOR_PALETTES['white_clean']
         
         config.background.header_color = bg_palette['header_color']
         config.background.even_color = bg_palette['even_color']
         config.background.odd_color = bg_palette['odd_color']
         config.background.first_color = bg_palette['first_color']
         config.background.last_color = bg_palette['last_color']
-        config.background.random_colors = bg_palette['random_colors']
+        config.background.random_colors = bg_palette.get('random_colors', ['#FFFFFF'])
         
+        # Select background pattern (use simplified realistic patterns)
         if randomize_all:
             config.background.pattern = _weighted_choice(RANDOM_WEIGHTS['background_patterns'])
         
-        # === FONT CONFIGURATION ===
+        # === STEP 3: SELECT FONT with weighted text color (favor black) ===
+        # Use weighted font selection: Times New Roman (35%), Arial (25%), others (40%)
         if font_category and font_category in ['serif', 'sans-serif', 'monospace']:
-            fonts = get_fonts_by_category(font_category)
-            config.font.family = random.choice(fonts) if fonts else FONT_FAMILIES[0]
+            if font_category == 'serif':
+                config.font.family = random.choice(FONTS_SERIF)
+            elif font_category == 'sans-serif':
+                config.font.family = random.choice(FONTS_SANS_SERIF)
+            else:
+                config.font.family = random.choice(FONTS_MONOSPACE)
         elif randomize_all:
-            # Weighted font category selection
-            category = _weighted_choice(RANDOM_WEIGHTS['font_categories'])
-            fonts = get_fonts_by_category(category)
-            config.font.family = random.choice(fonts) if fonts else FONT_FAMILIES[0]
+            # Use weighted font list - heavily favors Times New Roman and Arial
+            config.font.family = random.choice(FONTS_WEIGHTED)
         
+        # Font size - select from tiers with weighted probability
         if randomize_all:
-            config.font.size = random.choice(FONT_SIZES)
-            config.font.color = random.choice(FONT_COLORS)
-            
-            # Random font styling with probability
-            if random.random() < 0.3:
-                config.font.weight = 'random'
-            if random.random() < 0.2:
-                config.font.style = 'random'
+            tier_name = _weighted_choice(RANDOM_WEIGHTS.get('font_size_tiers', {
+                'small': 20, 'medium': 45, 'large': 25, 'xlarge': 10
+            }))
+            tier_data = FONT_SIZE_TIERS.get(tier_name, FONT_SIZE_TIERS['medium'])
+            config.font.size = random.choice(tier_data['sizes'])
+        
+        # Text color - weighted selection favoring black
+        if randomize_all:
+            text_color_type = _weighted_choice(RANDOM_WEIGHTS.get('text_colors', {
+                'black': 75, 'dark_gray': 15, 'colored': 10
+            }))
+            if text_color_type == 'black':
+                config.font.color = '#000000'
+            elif text_color_type == 'dark_gray':
+                config.font.color = random.choice(['#1a1a1a', '#333333', '#444444'])
+            else:
+                # Use palette's contrast-safe colors for colored option
+                safe_text_colors = bg_palette.get('text_colors', ['#000000'])
+                config.font.color = random.choice(safe_text_colors)
+        else:
+            config.font.color = '#000000'
+        
+        # Font weight and style - less random, more realistic
+        if randomize_all:
+            # Most documents use normal weight with occasional bold
             if random.random() < 0.15:
-                config.font.transform = 'random'
+                config.font.weight = 'bold'
+            # Italic is rare in tables
+            if random.random() < 0.05:
+                config.font.style = 'italic'
+            # Transform is rare
+            if random.random() < 0.08:
+                config.font.transform = random.choice(['uppercase', 'capitalize'])
         
-        # === ALIGNMENT CONFIGURATION ===
+        # === STEP 4: ALIGNMENT - header and data can have different alignments ===
         if randomize_all:
-            config.alignment.horizontal = random.choice(HORIZONTAL_ALIGNMENTS)
-            config.alignment.vertical = random.choice(VERTICAL_ALIGNMENTS)
+            # Check if border style requires consistent alignment
+            alignment_constraint = border_attrs.get('alignment_constraint')
             
-            # Random column-specific alignments
-            if random.random() < 0.3:
-                num_cols = random.randint(2, 7)
-                for col in range(num_cols):
-                    if random.random() < 0.4:
-                        config.alignment.column_alignments[col] = random.choice(HORIZONTAL_ALIGNMENTS)
+            # Header alignment - commonly centered
+            header_h_weights = {'center': 60, 'left': 30, 'right': 10}
+            config.alignment.header_horizontal = _weighted_choice(header_h_weights)
+            config.alignment.header_vertical = 'middle'
+            
+            if alignment_constraint == 'consistent':
+                # Borderless/minimal - data should match header for consistency
+                config.alignment.data_horizontal = config.alignment.header_horizontal
+                config.alignment.data_vertical = 'middle'
+            else:
+                # Full borders allow different data alignment
+                data_h_weights = {'left': 50, 'center': 35, 'right': 15}
+                config.alignment.data_horizontal = _weighted_choice(data_h_weights)
+                config.alignment.data_vertical = random.choice(['top', 'middle'])
+            
+            # Set fallback horizontal/vertical (used when specific ones are empty)
+            config.alignment.horizontal = config.alignment.data_horizontal
+            config.alignment.vertical = config.alignment.data_vertical
         
-        # === SPACING CONFIGURATION ===
+        # === STEP 5: SPACING - must be coherent with font size ===
         if randomize_all:
-            config.spacing.padding = random.choice(PADDING_VALUES)
-            config.spacing.cell_spacing = random.choice(CELL_SPACING_VALUES)
-            config.spacing.line_height = random.choice(LINE_HEIGHT_VALUES)
+            # Get coherent spacing based on font size (uses tight/normal values)
+            coherent_spacing = get_coherent_spacing(config.font.size)
+            
+            # Use weighted padding - favor normal/tight values for realistic look
+            config.spacing.padding = random.choice(PADDING_SYMMETRIC_WEIGHTED)
+            
+            # Ensure minimum padding for borderless styles
+            min_padding = border_attrs.get('min_padding')
+            if min_padding:
+                try:
+                    current_pad = int(config.spacing.padding.replace('px', ''))
+                    min_pad = int(min_padding.replace('px', ''))
+                    if current_pad < min_pad:
+                        config.spacing.padding = min_padding
+                except ValueError:
+                    pass
+            
+            config.spacing.cell_spacing = '0'  # Most realistic
+            
+            # Use weighted line-height - favor normal values
+            config.spacing.line_height = random.choice(LINE_HEIGHT_WEIGHTED)
         
-        # === LINE BREAK CONFIGURATION ===
+        # === STEP 6: LINE BREAKS ===
         if line_break_config and line_break_config in LINE_BREAK_CONFIGS:
             lb_config = LINE_BREAK_CONFIGS[line_break_config]
         elif randomize_all:
@@ -806,65 +895,47 @@ def random_select_style(
     randomize_unspecified: bool = True
 ) -> StyleConfig:
     """
-    Create a random style configuration with optional constraints.
+    Create a realistic random style configuration with optional constraints.
     
-    This is the main function for randomly selecting and combining style attributes
-    based on user requirements through arguments.
+    This function ensures coherent style combinations:
+    - Background and text colors have sufficient contrast
+    - Borderless styles use consistent alignment (not mixed left/right columns)
+    - Font size, padding, and line-height are proportionally matched
+    - Style combinations reflect real document design patterns
     
     Args:
         border_style: Specific border style from BORDER_STYLES keys
-                     ('full', 'borderless', 'outer_only', 'horizontal_only', 
-                      'vertical_only', 'header_border_only', 'header_with_outer', 'colspan_aware')
         background_palette: Color palette from BACKGROUND_COLOR_PALETTES keys
-                           ('neutral', 'blue', 'green', 'warm', 'purple', 'teal', 
-                            'orange', 'pink', 'corporate_blue', 'minimal')
         background_pattern: Pattern from BACKGROUND_PATTERNS
-                           ('none', 'header', 'even-odd', 'first-last', 'striped', 
-                            'random', 'checkerboard', 'column-based')
         font_category: Font category ('serif', 'sans-serif', 'monospace')
         font_family: Specific font family string
-        font_size: Specific font size (e.g., '32px', '36px')
+        font_size: Specific font size (e.g., '24px', '28px')
         font_color: Specific font color
-        alignment: Horizontal alignment ('left', 'center', 'right', 'justify')
+        alignment: Horizontal alignment ('left', 'center', 'right')
         padding: Cell padding value
         line_break_config: Line break configuration from LINE_BREAK_CONFIGS keys
-                          ('none', 'light', 'moderate', 'heavy', 'content_aware')
-        randomize_unspecified: If True, randomly select unspecified attributes;
-                              otherwise use defaults
+        randomize_unspecified: If True, randomly select unspecified attributes
     
     Returns:
-        StyleConfig instance with selected/random options
-    
-    Examples:
-        # Fully random style
-        config = random_select_style()
-        
-        # Random with blue color scheme
-        config = random_select_style(background_palette='blue')
-        
-        # Random with serif font and striped background
-        config = random_select_style(font_category='serif', background_pattern='striped')
-        
-        # Specific border style with random other attributes
-        config = random_select_style(border_style='horizontal_only')
-        
-        # Multiple constraints
-        config = random_select_style(
-            border_style='full',
-            background_palette='corporate_blue',
-            font_category='sans-serif',
-            alignment='center'
-        )
+        StyleConfig instance with coherent style options
     """
+    from config.style_attributes import (
+        FONT_SIZE_TIERS, get_coherent_spacing, PADDING_SYMMETRIC,
+        FONTS_SERIF, FONTS_SANS_SERIF, FONTS_MONOSPACE,
+        BORDER_WIDTHS_LIGHT, BORDER_WIDTHS_MEDIUM
+    )
+    
     config = StyleConfig()
     
-    # === BORDER CONFIGURATION ===
+    # === STEP 1: BORDER CONFIGURATION ===
     if border_style and border_style in BORDER_STYLES:
+        selected_border_style = border_style
         border_attrs = BORDER_STYLES[border_style]
     elif randomize_unspecified:
-        selected_style = _weighted_choice(RANDOM_WEIGHTS['border_styles'])
-        border_attrs = BORDER_STYLES[selected_style]
+        selected_border_style = _weighted_choice(RANDOM_WEIGHTS['border_styles'])
+        border_attrs = BORDER_STYLES[selected_border_style]
     else:
+        selected_border_style = 'full'
         border_attrs = BORDER_STYLES['full']
     
     config.border.style = border_attrs.get('style', 'border')
@@ -876,80 +947,148 @@ def random_select_style(
     config.border.keep_colspan_col_borders = border_attrs.get('keep_colspan_col_borders', True)
     
     if randomize_unspecified:
-        config.border.width = random.choice(BORDER_WIDTHS)
-        config.border.color = random.choice(BORDER_COLORS)
+        config.border.width = random.choice(BORDER_WIDTHS_LIGHT + BORDER_WIDTHS_MEDIUM)
+        # Use weighted border color selection - favor black/dark
+        border_color_type = _weighted_choice(RANDOM_WEIGHTS.get('border_colors', {
+            'black': 60, 'dark_gray': 25, 'medium_gray': 10, 'light_gray': 5
+        }))
+        if border_color_type == 'black':
+            config.border.color = '#000000'
+        elif border_color_type == 'dark_gray':
+            config.border.color = random.choice(['#333333', '#444444'])
+        elif border_color_type == 'medium_gray':
+            config.border.color = random.choice(['#666666', '#888888'])
+        else:
+            config.border.color = random.choice(['#cccccc', '#dddddd'])
     
-    # === BACKGROUND CONFIGURATION ===
+    # === STEP 2: BACKGROUND with contrast-safe colors ===
     if background_palette and background_palette in BACKGROUND_COLOR_PALETTES:
+        palette_name = background_palette
         bg_palette = BACKGROUND_COLOR_PALETTES[background_palette]
     elif randomize_unspecified:
-        palette_name = random.choice(list(BACKGROUND_COLOR_PALETTES.keys()))
-        bg_palette = BACKGROUND_COLOR_PALETTES[palette_name]
+        palette_name = _weighted_choice(RANDOM_WEIGHTS.get('background_palettes', {
+            'white_clean': 40, 'minimal_white': 25, 'light_gray': 15,
+            'soft_blue': 5, 'soft_green': 4, 'warm_cream': 4,
+            'corporate_blue': 3, 'corporate_dark': 2, 'teal_accent': 1, 'soft_purple': 1
+        }))
+        bg_palette = BACKGROUND_COLOR_PALETTES.get(palette_name, BACKGROUND_COLOR_PALETTES['white_clean'])
     else:
-        bg_palette = BACKGROUND_COLOR_PALETTES['neutral']
+        palette_name = 'white_clean'
+        bg_palette = BACKGROUND_COLOR_PALETTES['white_clean']
     
     config.background.header_color = bg_palette['header_color']
     config.background.even_color = bg_palette['even_color']
     config.background.odd_color = bg_palette['odd_color']
     config.background.first_color = bg_palette['first_color']
     config.background.last_color = bg_palette['last_color']
-    config.background.random_colors = bg_palette['random_colors']
+    config.background.random_colors = bg_palette.get('random_colors', ['#FFFFFF'])
     
     if background_pattern:
         config.background.pattern = background_pattern
     elif randomize_unspecified:
         config.background.pattern = _weighted_choice(RANDOM_WEIGHTS['background_patterns'])
     
-    # === FONT CONFIGURATION ===
+    # === STEP 3: FONT with contrast-safe text color ===
     if font_family:
         config.font.family = font_family
     elif font_category and font_category in ['serif', 'sans-serif', 'monospace']:
-        fonts = get_fonts_by_category(font_category)
-        config.font.family = random.choice(fonts) if fonts else FONT_FAMILIES[0]
+        if font_category == 'serif':
+            config.font.family = random.choice(FONTS_SERIF)
+        elif font_category == 'sans-serif':
+            config.font.family = random.choice(FONTS_SANS_SERIF)
+        else:
+            config.font.family = random.choice(FONTS_MONOSPACE)
     elif randomize_unspecified:
         category = _weighted_choice(RANDOM_WEIGHTS['font_categories'])
         fonts = get_fonts_by_category(category)
-        config.font.family = random.choice(fonts) if fonts else FONT_FAMILIES[0]
+        config.font.family = random.choice(fonts) if fonts else FONTS_SANS_SERIF[0]
     
     if font_size:
         config.font.size = font_size
     elif randomize_unspecified:
-        config.font.size = random.choice(FONT_SIZES)
+        tier_name = _weighted_choice(RANDOM_WEIGHTS.get('font_size_tiers', {
+            'small': 20, 'medium': 45, 'large': 25, 'xlarge': 10
+        }))
+        tier_data = FONT_SIZE_TIERS.get(tier_name, FONT_SIZE_TIERS['medium'])
+        config.font.size = random.choice(tier_data['sizes'])
     
+    # Text color - weighted selection favoring black
     if font_color:
         config.font.color = font_color
     elif randomize_unspecified:
-        config.font.color = random.choice(FONT_COLORS)
+        text_color_type = _weighted_choice(RANDOM_WEIGHTS.get('text_colors', {
+            'black': 75, 'dark_gray': 15, 'colored': 10
+        }))
+        if text_color_type == 'black':
+            config.font.color = '#000000'
+        elif text_color_type == 'dark_gray':
+            config.font.color = random.choice(['#1a1a1a', '#333333', '#444444'])
+        else:
+            # Use palette's contrast-safe colors for colored option
+            safe_text_colors = bg_palette.get('text_colors', ['#000000'])
+            config.font.color = random.choice(safe_text_colors)
+    else:
+        config.font.color = '#000000'
     
+    # Font weight/style - realistic probabilities
     if randomize_unspecified:
-        # Random font styling with probability
-        if random.random() < 0.3:
-            config.font.weight = 'random'
-        if random.random() < 0.2:
-            config.font.style = 'random'
         if random.random() < 0.15:
-            config.font.transform = 'random'
+            config.font.weight = 'bold'
+        if random.random() < 0.05:
+            config.font.style = 'italic'
+        if random.random() < 0.08:
+            config.font.transform = random.choice(['uppercase', 'capitalize'])
     
-    # === ALIGNMENT CONFIGURATION ===
+    # === STEP 4: ALIGNMENT - header and data can have different alignments ===
     if alignment:
         config.alignment.horizontal = alignment
+        config.alignment.header_horizontal = alignment
+        config.alignment.data_horizontal = alignment
     elif randomize_unspecified:
-        config.alignment.horizontal = random.choice(HORIZONTAL_ALIGNMENTS)
+        alignment_constraint = border_attrs.get('alignment_constraint')
+        
+        # Header alignment - commonly centered
+        header_h_weights = {'center': 60, 'left': 30, 'right': 10}
+        config.alignment.header_horizontal = _weighted_choice(header_h_weights)
+        config.alignment.header_vertical = 'middle'
+        
+        if alignment_constraint == 'consistent':
+            # Borderless/minimal - data should match header for consistency
+            config.alignment.data_horizontal = config.alignment.header_horizontal
+            config.alignment.data_vertical = 'middle'
+        else:
+            # Full borders allow different data alignment
+            data_h_weights = {'left': 50, 'center': 35, 'right': 15}
+            config.alignment.data_horizontal = _weighted_choice(data_h_weights)
+            config.alignment.data_vertical = random.choice(['top', 'middle'])
+        
+        # Set fallback horizontal/vertical
+        config.alignment.horizontal = config.alignment.data_horizontal
+        config.alignment.vertical = config.alignment.data_vertical
     
-    if randomize_unspecified:
-        config.alignment.vertical = random.choice(VERTICAL_ALIGNMENTS)
-    
-    # === SPACING CONFIGURATION ===
+    # === STEP 5: SPACING - coherent with font size ===
     if padding:
         config.spacing.padding = padding
     elif randomize_unspecified:
-        config.spacing.padding = random.choice(PADDING_VALUES)
+        config.spacing.padding = random.choice(PADDING_SYMMETRIC)
+        
+        # Ensure minimum padding for borderless styles
+        min_padding = border_attrs.get('min_padding')
+        if min_padding:
+            try:
+                current_pad = int(config.spacing.padding.replace('px', ''))
+                min_pad = int(min_padding.replace('px', ''))
+                if current_pad < min_pad:
+                    config.spacing.padding = min_padding
+            except ValueError:
+                pass
     
     if randomize_unspecified:
-        config.spacing.cell_spacing = random.choice(CELL_SPACING_VALUES)
-        config.spacing.line_height = random.choice(LINE_HEIGHT_VALUES)
+        coherent_spacing = get_coherent_spacing(config.font.size)
+        config.spacing.cell_spacing = '0'
+        config.spacing.line_height = coherent_spacing['line_height']
     
-    # === LINE BREAK CONFIGURATION ===
+    # === STEP 6: LINE BREAKS ===
     if line_break_config and line_break_config in LINE_BREAK_CONFIGS:
         lb_config = LINE_BREAK_CONFIGS[line_break_config]
     elif randomize_unspecified:
