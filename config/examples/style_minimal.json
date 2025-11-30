@@ -1,0 +1,77 @@
+{
+  "border": {
+    "style": "partly-borderless",
+    "width": "2px",
+    "color": "black",
+    "remove_row_borders": false,
+    "remove_col_borders": false,
+    "remove_inner_borders": true,
+    "keep_outer_border": true,
+    "keep_header_row_border": true,
+    "keep_colspan_col_borders": true,
+    "random_delete_row_borders": false,
+    "random_delete_col_borders": false,
+    "border_delete_probability": 0.3
+  },
+  "background": {
+    "pattern": "none",
+    "header_color": "#F2F2F2",
+    "even_color": "#FFFFFF",
+    "odd_color": "#F9F9F9",
+    "first_color": "#E8E8E8",
+    "last_color": "#E8E8E8",
+    "random_colors": [
+      "#F2F2F2",
+      "#E8F4F8",
+      "#FFF8E8"
+    ],
+    "data_cell_color": "#FFFFFF",
+    "header_text_color": "#000000",
+    "column_colors": {}
+  },
+  "font": {
+    "family": "Times New Roman, serif",
+    "size": "36px",
+    "weight": "normal",
+    "style": "normal",
+    "color": "black",
+    "transform": "none",
+    "header_weight": "bold",
+    "header_style": "normal",
+    "header_color": "black",
+    "header_size": "",
+    "footer_weight": "bold",
+    "footer_style": "normal",
+    "random_weight_probability": 0.3,
+    "random_style_probability": 0.2,
+    "random_transform_probability": 0.1
+  },
+  "alignment": {
+    "horizontal": "center",
+    "vertical": "middle",
+    "column_alignments": {},
+    "header_horizontal": "center",
+    "header_vertical": "middle",
+    "data_horizontal": "",
+    "data_vertical": ""
+  },
+  "spacing": {
+    "padding": "8px",
+    "cell_spacing": "0",
+    "line_height": "1.4",
+    "row_heights": {},
+    "column_widths": {},
+    "min_row_height": "30px",
+    "max_row_height": "80px",
+    "min_column_width": "50px",
+    "max_column_width": "200px",
+    "random_line_breaks": false,
+    "line_break_probability": 0.15,
+    "min_words_before_break": 3,
+    "max_breaks_per_cell": 2,
+    "break_on_punctuation": false,
+    "prefer_natural_breaks": false
+  },
+  "width": "100%",
+  "border_collapse": "collapse"
+}

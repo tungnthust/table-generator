@@ -1,0 +1,13 @@
+# Table Generator Dependencies
+# ============================
+
+# HTML Parsing
+beautifulsoup4>=4.12.0
+
+# Google AI
+google-genai>=0.1.0
+
+# Browser Automation (for rendering)
+playwright>=1.40.0
+
+# Note: After installing playwright, run: playwright install chromium
